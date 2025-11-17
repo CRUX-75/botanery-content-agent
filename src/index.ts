@@ -6,34 +6,28 @@ import { supabaseAdmin } from './lib/supabase';
 const app = express();
 app.use(express.json());
 
-// Health check mejorado
+// Health check
 app.get('/healthz', async (req, res) => {
   try {
-    // Test Supabase connection con timeout
     const { data, error } = await supabaseAdmin
-      .from('jobs')
+      .from('job_queue')
       .select('count')
       .limit(1)
       .single();
     
-    if (error) {
-      // Si la tabla no existe, es OK para el health check inicial
-      if (error.code === 'PGRST116') {
-        return res.json({ 
-          status: 'ok', 
-          timestamp: new Date().toISOString(),
-          service: 'dogonauts-content-generator',
-          message: 'Database connected (table not found - run migrations)'
-        });
-      }
+    if (error && error.code !== 'PGRST116') {
       throw error;
     }
+
+    // Stats básicas
+    const { data: stats } = await supabaseAdmin.rpc('get_system_stats');
 
     res.json({ 
       status: 'ok', 
       timestamp: new Date().toISOString(),
       service: 'dogonauts-content-generator',
-      database: 'connected'
+      database: 'connected',
+      stats: stats || {}
     });
   } catch (error) {
     logError('Health check failed', error);
@@ -44,22 +38,124 @@ app.get('/healthz', async (req, res) => {
   }
 });
 
-// Endpoint para verificar configuración (sin exponer secrets)
-app.get('/config', (req, res) => {
-  res.json({
-    environment: config.server.nodeEnv,
-    supabaseConfigured: !!config.supabase.url,
-    openaiConfigured: !!config.openai.apiKey,
-  });
+// Crear job de tipo CREATE_POST
+app.post('/jobs/create', async (req, res) => {
+  try {
+    const { target_channel = 'IG_FB' } = req.body;
+
+    const { data, error } = await supabaseAdmin
+      .from('job_queue')
+      .insert({
+        job_type: 'CREATE_POST',
+        payload: { target_channel },
+        status: 'PENDING',
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    log('[API] CREATE_POST job created', { jobId: data.id });
+    res.json({ success: true, job: data });
+  } catch (error) {
+    logError('[API] Failed to create job', error);
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Failed to create job' 
+    });
+  }
 });
 
-// Manejo de errores global
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  logError('Unhandled error', err);
-  res.status(500).json({ error: 'Internal server error' });
+// Crear job de tipo PUBLISH_POST
+app.post('/jobs/publish', async (req, res) => {
+  try {
+    const { post_id, force = false } = req.body;
+
+    const { data, error } = await supabaseAdmin
+      .from('job_queue')
+      .insert({
+        job_type: 'PUBLISH_POST',
+        payload: { post_id, force },
+        status: 'PENDING',
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    log('[API] PUBLISH_POST job created', { jobId: data.id });
+    res.json({ success: true, job: data });
+  } catch (error) {
+    logError('[API] Failed to create publish job', error);
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Failed to create job' 
+    });
+  }
 });
 
-// Start server
+// Crear job de tipo COLLECT_FEEDBACK
+app.post('/jobs/feedback', async (req, res) => {
+  try {
+    const { post_id, min_age_hours = 24 } = req.body;
+
+    const { data, error } = await supabaseAdmin
+      .from('job_queue')
+      .insert({
+        job_type: 'COLLECT_FEEDBACK',
+        payload: { post_id, min_age_hours },
+        status: 'PENDING',
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    log('[API] COLLECT_FEEDBACK job created', { jobId: data.id });
+    res.json({ success: true, job: data });
+  } catch (error) {
+    logError('[API] Failed to create feedback job', error);
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Failed to create job' 
+    });
+  }
+});
+
+// Ver posts recientes con métricas
+app.get('/posts', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('v_posts_with_metrics')
+      .select('*')
+      .limit(20);
+
+    if (error) throw error;
+
+    res.json({ success: true, posts: data });
+  } catch (error) {
+    logError('[API] Failed to get posts', error);
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Failed to get posts' 
+    });
+  }
+});
+
+// Ver jobs pendientes
+app.get('/jobs', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('v_pending_jobs')
+      .select('*');
+
+    if (error) throw error;
+
+    res.json({ success: true, jobs: data });
+  } catch (error) {
+    logError('[API] Failed to get jobs', error);
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Failed to get jobs' 
+    });
+  }
+});
+
 const PORT = config.server.port;
 app.listen(PORT, () => {
   log(`✅ Server running on http://localhost:${PORT}`);

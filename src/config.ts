@@ -13,6 +13,11 @@ function requireEnv(key: string): string {
   return value;
 }
 
+// Función para variables opcionales
+function optionalEnv(key: string, defaultValue: string = ''): string {
+  return process.env[key] || defaultValue;
+}
+
 export const config = {
   supabase: {
     url: requireEnv('SUPABASE_URL'),
@@ -21,6 +26,11 @@ export const config = {
   openai: {
     apiKey: requireEnv('OPENAI_API_KEY'),
   },
+  meta: {
+    accessToken: optionalEnv('META_ACCESS_TOKEN', 'dummy_token'),
+    instagramBusinessAccountId: optionalEnv('INSTAGRAM_BUSINESS_ACCOUNT_ID', 'dummy_id'),
+    facebookPageId: optionalEnv('FACEBOOK_PAGE_ID', 'dummy_page_id'),
+  },
   server: {
     port: parseInt(process.env.PORT || '3000', 10),
     nodeEnv: process.env.NODE_ENV || 'development',
@@ -28,6 +38,7 @@ export const config = {
   worker: {
     pollInterval: parseInt(process.env.WORKER_POLL_INTERVAL || '10000', 10),
   },
+  epsilon: parseFloat(process.env.EPSILON || '0.2'),
 };
 
 // Log de configuración (sin mostrar secrets)
@@ -35,4 +46,5 @@ console.log('[CONFIG] Environment loaded:', {
   supabaseUrl: config.supabase.url,
   nodeEnv: config.server.nodeEnv,
   port: config.server.port,
+  metaConfigured: config.meta.accessToken !== 'dummy_token',
 });
