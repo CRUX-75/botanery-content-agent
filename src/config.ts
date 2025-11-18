@@ -27,9 +27,9 @@ export const config = {
     apiKey: requireEnv('OPENAI_API_KEY'),
   },
   meta: {
-    accessToken: optionalEnv('META_ACCESS_TOKEN', 'dummy_token'),
-    instagramBusinessAccountId: optionalEnv('INSTAGRAM_BUSINESS_ACCOUNT_ID', 'dummy_id'),
-    facebookPageId: optionalEnv('FACEBOOK_PAGE_ID', 'dummy_page_id'),
+    accessToken: process.env.META_ACCESS_TOKEN ?? '',
+    instagramBusinessAccountId: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ?? '',
+    facebookPageId: process.env.FACEBOOK_PAGE_ID ?? '',
   },
   server: {
     port: parseInt(process.env.PORT || '3000', 10),
