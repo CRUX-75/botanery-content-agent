@@ -208,14 +208,30 @@ async function publishToChannels(
  * Helper para obtener la URL de imagen REAL del producto.
  * ❌ SIN placeholder: si no hay imagen, el job falla (así evitamos falsos positivos).
  */
+/**
+ * Helper para obtener la URL de imagen REAL del producto.
+ * SIN placeholder: si no hay imagen o hay error de Supabase, el job falla.
+ */
 async function getProductImageUrl(productId: string): Promise<string> {
   const { data: product, error } = await supabaseAdmin
     .from('products')
     .select('id, product_name, image_url, image')
     .eq('id', productId)
-    .single();
+    .maybeSingle(); // <--- importante: no trata "no row" como error automático
 
-  if (error || !product) {
+  if (error) {
+    // Aquí queremos ver exactamente qué devuelve Supabase
+    logError('[PUBLISH_POST] Supabase error loading product', {
+      productId,
+      error,
+    });
+    throw new Error(
+      `[PUBLISH_POST] Supabase error while loading product ${productId}`
+    );
+  }
+
+  if (!product) {
+    logError('[PUBLISH_POST] Product row not found in products', { productId });
     throw new Error(`[PUBLISH_POST] Product not found for image: ${productId}`);
   }
 
@@ -225,6 +241,10 @@ async function getProductImageUrl(productId: string): Promise<string> {
     null;
 
   if (!imageUrl) {
+    logError('[PUBLISH_POST] Product has no image_url/image', {
+      productId: product.id,
+      productName: product.product_name,
+    });
     throw new Error(
       `[PUBLISH_POST] Product ${product.id} (${product.product_name}) has no image_url/image`
     );
