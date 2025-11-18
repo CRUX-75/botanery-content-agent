@@ -24,4 +24,3 @@ EXPOSE 3000
 # Iniciar aplicación compilada
 CMD ["node", "dist/index.js"]
 
-COPY assets ./assets
