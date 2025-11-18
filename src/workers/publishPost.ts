@@ -21,7 +21,7 @@ export async function publishPostJob(payload: PublishJobPayload) {
   try {
     let post: GeneratedPost | null = null;
 
-    // 🔹 Opción 1: publicar un post específico por ID
+    // 1) Opción A: nos pasan un post concreto por ID
     if (payload.post_id) {
       const { data, error } = await supabaseAdmin
         .from('generated_posts')
@@ -32,9 +32,10 @@ export async function publishPostJob(payload: PublishJobPayload) {
       if (error || !data) {
         throw new Error(`Post ${payload.post_id} not found`);
       }
+
       post = data;
     } else {
-      // 🔹 Opción 2: siguiente DRAFT disponible (FIFO)
+      // 2) Opción B: coger el siguiente DRAFT disponible (FIFO)
       const { data, error } = await supabaseAdmin
         .from('generated_posts')
         .select('*')
@@ -47,6 +48,7 @@ export async function publishPostJob(payload: PublishJobPayload) {
         log('[PUBLISH_POST] No drafts available to publish');
         return;
       }
+
       post = data;
     }
 
@@ -54,7 +56,7 @@ export async function publishPostJob(payload: PublishJobPayload) {
       throw new Error('Post not found');
     }
 
-    // 🔒 Seguridad extra: evitar publicar algo que no sea DRAFT salvo force
+    // 3) Verificar estado del post
     if (post.status !== 'DRAFT' && !payload.force) {
       log('[PUBLISH_POST] Post is not in DRAFT status, skipping', {
         status: post.status,
@@ -69,27 +71,27 @@ export async function publishPostJob(payload: PublishJobPayload) {
       channel_target: post.channel_target,
     });
 
-    // 📝 Construir caption final
+    // 4) Construir caption final
     const fullCaption = buildCaption(post);
 
-    // 🚀 Publicar en IG/FB según channel_target
+    // 5) Publicar en IG/FB según channel_target
     const results = await publishToChannels(post, fullCaption);
 
-    // ❗ Si no se ha publicado en ningún canal, el job debe FALLAR
+    // 6) Si no se ha publicado en ningún canal, el job es un FAIL
     if (!results.igMediaId && !results.fbPostId) {
       throw new Error(
         `[PUBLISH_POST] No channel was published successfully for post ${post.id}`
       );
     }
 
-   // 🗄️ Actualizar el post con los IDs de publicación
-  const updateData: Partial<GeneratedPost> = {
-    status: 'PUBLISHED',
-    published_at: new Date().toISOString(),
-    ig_media_id: results.igMediaId ?? (post as any).ig_media_id ?? null,
-    fb_post_id: results.fbPostId ?? (post as any).fb_post_id ?? null,
-    channel: determineChannel(results), // 'IG' | 'FB' | 'BOTH'
-  };
+    // 7) Actualizar el post con los IDs de publicación
+    const updateData: Partial<GeneratedPost> = {
+      status: 'PUBLISHED',
+      published_at: new Date().toISOString(),
+      ig_media_id: results.igMediaId ?? (post as any).ig_media_id ?? null,
+      fb_post_id: results.fbPostId ?? (post as any).fb_post_id ?? null,
+      channel: determineChannel(results),
+    };
 
     const { error: updateError } = await supabaseAdmin
       .from('generated_posts')
@@ -102,7 +104,7 @@ export async function publishPostJob(payload: PublishJobPayload) {
       );
     }
 
-    // 📊 Crear entrada en post_feedback para tracking (si no existe ya)
+    // 8) Crear entrada en post_feedback (si no existe ya)
     const { error: feedbackError } = await supabaseAdmin
       .from('post_feedback')
       .insert({
@@ -112,9 +114,12 @@ export async function publishPostJob(payload: PublishJobPayload) {
         collection_count: 0,
       });
 
-    // 23505 = unique_violation → ya existe, no es crítico
-    if (feedbackError && feedbackError.code !== '23505') {
-      logError('[PUBLISH_POST] Failed to create feedback entry', feedbackError);
+    // 23505 = unique_violation → la fila ya existe, no es crítico
+    if (feedbackError && (feedbackError as any).code !== '23505') {
+      logError(
+        '[PUBLISH_POST] Failed to create feedback entry',
+        feedbackError
+      );
     }
 
     log('[PUBLISH_POST] ✅ Post published successfully', {
@@ -125,14 +130,13 @@ export async function publishPostJob(payload: PublishJobPayload) {
 
     return { success: true, post, results };
   } catch (error: any) {
-    // 👀 Importante: aquí SÍ dejamos que el worker marque el job como FAILED
     logError('[PUBLISH_POST] Job failed', error?.response?.data || error);
     throw error;
   }
 }
 
 /**
- * Construye el caption final uniendo hook, body, cta + hashtag_block.
+ * Construye el caption final uniendo hook, body, cta y hashtag_block.
  */
 function buildCaption(post: GeneratedPost): string {
   const parts = [post.hook, '', post.body, '', post.cta];
@@ -147,8 +151,7 @@ function buildCaption(post: GeneratedPost): string {
 
 /**
  * Publica en IG/FB según channel_target.
- * IG: obligatorio si está en IG_FB o IG_ONLY.
- * FB: opcional (por ahora un fallo en FB NO rompe el job si IG fue bien).
+ * IG es crítico (si falla, falla el job). FB por ahora es best-effort.
  */
 async function publishToChannels(
   post: GeneratedPost,
@@ -161,7 +164,7 @@ async function publishToChannels(
   const publishToFB =
     post.channel_target === 'IG_FB' || post.channel_target === 'FB_ONLY';
 
-  // 🔹 Instagram (crítico: si falla, falla todo el job)
+  // Instagram (crítico)
   if (publishToIG) {
     try {
       results.igMediaId = await publishInstagramSingle(post, caption);
@@ -176,12 +179,12 @@ async function publishToChannels(
         '[PUBLISH_POST] Instagram publication failed',
         error?.response?.data || error
       );
-      // Re-lanzamos: el worker marcará el job como FAILED
+      // relanzamos: el worker marcará el job como FAILED
       throw error;
     }
   }
 
-  // 🔹 Facebook (no crítico de momento)
+  // Facebook (no crítico por ahora)
   if (publishToFB) {
     try {
       results.fbPostId = await publishFacebookSingle(post, caption);
@@ -197,7 +200,7 @@ async function publishToChannels(
         '[PUBLISH_POST] Facebook publication failed',
         error?.response?.data || error
       );
-      // Por ahora SOLO logueamos; si quieres que también rompa el job, aquí puedes `throw error`
+      // si quisieras que también rompa el job, aquí podrías hacer: throw error;
     }
   }
 
@@ -205,72 +208,28 @@ async function publishToChannels(
 }
 
 /**
- * Helper para obtener la URL de imagen REAL del producto.
- * ❌ SIN placeholder: si no hay imagen, el job falla (así evitamos falsos positivos).
- */
-/**
- * Helper para obtener la URL de imagen REAL del producto.
- * SIN placeholder: si no hay imagen o hay error de Supabase, el job falla.
- */
-async function getProductImageUrl(productId: string): Promise<string> {
-  const { data: product, error } = await supabaseAdmin
-    .from('products')
-    .select('id, product_name, image_url, image')
-    .eq('id', productId)
-    .maybeSingle(); // <--- importante: no trata "no row" como error automático
-
-  if (error) {
-    // Aquí queremos ver exactamente qué devuelve Supabase
-    logError('[PUBLISH_POST] Supabase error loading product', {
-      productId,
-      error,
-    });
-    throw new Error(
-      `[PUBLISH_POST] Supabase error while loading product ${productId}`
-    );
-  }
-
-  if (!product) {
-    logError('[PUBLISH_POST] Product row not found in products', { productId });
-    throw new Error(`[PUBLISH_POST] Product not found for image: ${productId}`);
-  }
-
-  const imageUrl =
-    (product.image_url as string | null) ||
-    (product.image as string | null) ||
-    null;
-
-  if (!imageUrl) {
-    logError('[PUBLISH_POST] Product has no image_url/image', {
-      productId: product.id,
-      productName: product.product_name,
-    });
-    throw new Error(
-      `[PUBLISH_POST] Product ${product.id} (${product.product_name}) has no image_url/image`
-    );
-  }
-
-  log('[PUBLISH_POST] Using product image', {
-    productId: product.id,
-    productName: product.product_name,
-    imageUrl,
-  });
-
-  return imageUrl;
-}
-
-/**
  * Publicación simple en Instagram: una sola imagen + caption.
- * Usa metaClient.publishInstagramSingle con la URL REAL del producto.
+ * Usa image_url del propio post. Si no está, rompe.
  */
 async function publishInstagramSingle(
   post: GeneratedPost,
   caption: string
 ): Promise<string> {
-  const imageUrl = await getProductImageUrl(post.product_id as string);
+  const postImageUrl = ((post as any).image_url as string | null) ?? null;
+
+  if (!postImageUrl || !postImageUrl.trim().length) {
+    throw new Error(
+      `[PUBLISH_POST] Post ${post.id} has no image_url set. Make sure generated_posts.image_url is filled when creating the draft.`
+    );
+  }
+
+  log('[PUBLISH_POST] Using post image_url for IG publish', {
+    postId: post.id,
+    imageUrl: postImageUrl,
+  });
 
   const igMediaId = await metaClient.publishInstagramSingle({
-    image_url: imageUrl,
+    image_url: postImageUrl,
     caption,
   });
 
@@ -284,8 +243,7 @@ async function publishInstagramSingle(
 }
 
 /**
- * Publicación simple en Facebook: solo texto + link a la tienda.
- * (Más adelante se puede mejorar para usar también imagen/carrusel.)
+ * Publicación simple en Facebook: texto + link a la tienda.
  */
 async function publishFacebookSingle(
   post: GeneratedPost,
@@ -307,8 +265,8 @@ function determineChannel(results: PublishResults): 'IG' | 'FB' | 'BOTH' {
   if (results.igMediaId) return 'IG';
   if (results.fbPostId) return 'FB';
 
+  // Si llega aquí, es bug lógico porque antes ya comprobamos que haya al menos un ID
   throw new Error(
     '[PUBLISH_POST] determineChannel called with no igMediaId or fbPostId'
   );
 }
-
