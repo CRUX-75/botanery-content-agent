@@ -1,7 +1,10 @@
+// src/workers/createPost.ts
+
 import { supabaseAdmin } from '../lib/supabase';
 import { openai } from '../lib/openai';
 import { log, logError } from '../lib/logger';
 import { DOGONAUTS_CONTENT_SYSTEM_PROMPT } from '../agent/systemPrompt';
+import { composeImageForPost } from '../lib/imageComposer';
 
 type JobPayload = {
   target_channel?: 'IG_FB' | 'IG_ONLY' | 'FB_ONLY';
@@ -38,13 +41,14 @@ export async function createPostJob(payload: JobPayload) {
     price: product.verkaufspreis,
   });
 
-  // Estos tres parámetros los usaremos luego para Epsilon-Greedy / A/B
+  // Parámetros fijos por ahora (luego los usaremos para Epsilon-Greedy / A/B)
   const style = 'fun' as const;
   const format = 'IG_CAROUSEL' as const;
   const angle = 'xmas_gift' as const;
 
   const shortDescription =
-    (product.description as string | null)?.slice(0, 400) || 'Keine Beschreibung verfügbar';
+    (product.description as string | null)?.slice(0, 400) ||
+    'Keine Beschreibung verfügbar';
 
   const category =
     (product.kategorie as string | null) ||
@@ -80,7 +84,7 @@ Kampagnenkontext:
 - Ziel: Scroll stoppen, Weihnachts-/Geschenkstimmung erzeugen, klar zur Handlung (Kauf im Dogonauts-Shop) führen.
 
 WICHTIG:
-- Schreibe IMMER in lockerer **Du-Form** auf Deutsch.
+- Schreibe IMMER in lockerer Du-Form auf Deutsch.
 - Kein "Sie", keine formelle Anrede.
 - Kein Markdown, keine Erklärungen.
 - Verwende KEINE anderen Preise oder Rabatte als oben angegeben.
@@ -127,31 +131,57 @@ das im System Prompt beschrieben ist.
     throw new Error('Invalid JSON structure received from OpenAI');
   }
 
-  // 3) Insertar en generated_posts (incluyendo image_prompt)
-  const { error: insertError } = await supabaseAdmin.from('generated_posts').insert({
-    product_id: product.id,
-    style,
-    format,
-    angle,
-    hook: json.hook,
-    body: json.body,
-    cta: json.cta,
-    hashtag_block: json.hashtag_block,
-    // nuevo: guardamos el image_prompt para usarlo luego en Image Styler
-    image_prompt: json.image_prompt,
-    status: 'DRAFT',
-    channel_target: payload.target_channel || 'IG_FB',
-  });
+  // 3) Insertar en generated_posts (incluyendo image_prompt e image_url)
+  const { data: insertData, error: insertError } = await supabaseAdmin
+    .from('generated_posts')
+    .insert({
+      product_id: product.id,
+      style,
+      format,
+      angle,
+      hook: json.hook,
+      body: json.body,
+      cta: json.cta,
+      hashtag_block: json.hashtag_block,
+      image_prompt: json.image_prompt, // para uso futuro (Image Styler / templates)
+      image_url: imageUrl,             // imagen base del producto
+      status: 'DRAFT',
+      channel_target: payload.target_channel || 'IG_FB',
+    })
+    .select('*')
+    .single();
 
-  if (insertError) {
+  if (insertError || !insertData) {
     logError('[CREATE_POST] Error inserting generated_post', insertError);
-    throw insertError;
+    throw insertError || new Error('Failed to insert generated_post');
   }
 
   log('[CREATE_POST] Draft created successfully', {
+    postId: insertData.id,
     productId: product.id,
     productName: product.product_name,
   });
 
-  return { product, post: json };
+  // 4) Componer imagen con Sharp y guardar composed_image_url
+  try {
+    const composedUrl = await composeImageForPost(insertData);
+
+    await supabaseAdmin
+      .from('generated_posts')
+      .update({ composed_image_url: composedUrl })
+      .eq('id', insertData.id);
+
+    log('[CREATE_POST] Imagen compuesta guardada', {
+      postId: insertData.id,
+      composed_image_url: composedUrl,
+    });
+  } catch (error) {
+    logError(
+      '[CREATE_POST] Falló la composición Sharp (fallback a image_url)',
+      error
+    );
+    // No rompemos el job: el post sigue siendo usable con image_url
+  }
+
+  return { product, post: json, generatedPost: insertData };
 }
