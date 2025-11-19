@@ -59,15 +59,24 @@ export async function composeImageForPost(post: any): Promise<string> {
       log('[SHARP] Logo NO encontrado en ninguna ruta, se compone solo con producto', { logoCandidates });
     }
 
-    // 4️⃣ Crear overlay del producto (sombra + imagen + logo)
-    const overlays: sharp.OverlayOptions[] = [
-      { input: blurredShadow, gravity: 'center', top: 20 },
-      { input: resizedProduct, gravity: 'center' },
-    ];
+   // 4️⃣ Crear overlay del producto (centrado manualmente) y logo (si existe)
+const productLeft = Math.floor((1080 - 960) / 2); // 60
+const productTop = Math.floor((1080 - 960) / 2);  // 60
 
-    if (logoPath) {
-      overlays.push({ input: logoPath, gravity: 'southeast' });
-    }
+const overlays: sharp.OverlayOptions[] = [
+  {
+    input: resizedProduct,
+    left: productLeft,
+    top: productTop,
+  },
+];
+
+if (logoPath) {
+  overlays.push({
+    input: logoPath,
+    gravity: 'southeast',
+  });
+}
 
     // 5️⃣ Crear lienzo base con fondo beige claro
     const composed = await sharp({
