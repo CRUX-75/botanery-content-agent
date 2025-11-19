@@ -14,22 +14,25 @@ export async function createPostJob(payload: JobPayload) {
   log('[CREATE_POST] Starting job with payload', payload);
 
   // 1) Elegir producto desde tabla `products`
-  const { data: products, error: productError } = await supabaseAdmin
-    .from('products')
-    .select('*')
-    .eq('is_active', true)
-    .gt('stock', 0)
-    .limit(50); // cogemos varios para poder randomizar
+const { data: products, error: productError } = await supabaseAdmin
+  .from('products')
+  .select('*')
+  .eq('is_active', true)
+  .gt('stock', 0)
+  .not('image_url', 'is', null)
+  .not('image_url', 'eq', '')
+  .limit(50); // cogemos varios para poder randomizar
 
-  if (productError) {
-    logError('[CREATE_POST] Error fetching products', productError);
-    throw productError;
-  }
+if (productError) {
+  logError('[CREATE_POST] Error fetching products', productError);
+  throw productError;
+}
 
-  if (!products || products.length === 0) {
-    logError('[CREATE_POST] No active products with stock > 0 found');
-    throw new Error('No active products with stock > 0 found');
-  }
+if (!products || products.length === 0) {
+  logError('[CREATE_POST] No valid products with image_url and stock > 0 found');
+  throw new Error('No valid products with image_url and stock > 0 found');
+}
+
 
   // Elegir uno al azar (más adelante Epsilon-Greedy)
   const randomIndex = Math.floor(Math.random() * products.length);
