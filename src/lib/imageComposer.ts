@@ -26,6 +26,16 @@ export async function composeImageForPost(post: any): Promise<string> {
         fit: 'inside',
         withoutEnlargement: true,
       })
+      .png()
+      .toBuffer();
+
+    // 2️⃣.b Crear sombra (blur + opacidad reducida)
+    const blurredShadow = await sharp(resizedProduct)
+      .removeAlpha()
+      .resize(960, 960, { fit: 'inside' })
+      .blur(30)
+      .modulate({ brightness: 0.4 })
+      .png()
       .toBuffer();
 
     // 3️⃣ Buscar logo local
@@ -49,8 +59,9 @@ export async function composeImageForPost(post: any): Promise<string> {
       log('[SHARP] Logo NO encontrado en ninguna ruta, se compone solo con producto', { logoCandidates });
     }
 
-    // 4️⃣ Crear overlay del producto (y logo si existe)
+    // 4️⃣ Crear overlay del producto (sombra + imagen + logo)
     const overlays: sharp.OverlayOptions[] = [
+      { input: blurredShadow, gravity: 'center', top: 20 },
       { input: resizedProduct, gravity: 'center' },
     ];
 
