@@ -14,23 +14,23 @@ export async function createPostJob(job: any) {
     console.log('\n--- CREATE POST JOB START ---');
     console.log(`Job ID: ${job?.id ?? 'unknown'}`);
 
-    // 1) Seleccionar producto válido
+    // 1) Seleccionar producto válido (ahora con Epsilon-Greedy bajo el capó)
     const product = await selectProduct();
     console.log(
-      `🎯 Producto elegido entre válidos: ${product.product_name} (${product.id})`
+      `🎯 Producto recibido del selector: ${product.product_name} (${product.id})`,
     );
 
     // 2) Leer feature flag
     const useAdvancedVisual = await featureFlags.shouldUseFeature(
       'advanced_visuals_enabled',
-      product.id.toString()
+      product.id.toString(),
     );
     console.log(`🎛️ advanced_visual flag = ${useAdvancedVisual}`);
 
     // 3) Obtener template (aunque sea single)
     const template = getTemplateForProduct(product);
     console.log(
-      `📐 Template detectado: ${product.product_category ?? 'n/a'} → ${template.type}`
+      `📐 Template detectado: ${product.product_category ?? 'n/a'} → ${template.type}`,
     );
 
     let visualAssets: { mainImage: string; carouselImages: string[] | null };
@@ -66,8 +66,8 @@ export async function createPostJob(job: any) {
         caption_fb: postContent.caption_fb,
         composed_image_url: visualAssets.mainImage,
         carousel_images: visualAssets.carouselImages,
-        visual_format: visualFormat,          // 'single_legacy' o 'single' / 'carousel'
-        template_version: templateVersion,    // tracking versión del engine
+        visual_format: visualFormat, // 'single_legacy' o 'single' / 'carousel'
+        template_version: templateVersion, // tracking versión del engine
         use_advanced_visual: useAdvancedVisual,
         status: 'DRAFT',
         style: postContent.style,

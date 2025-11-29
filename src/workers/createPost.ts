@@ -13,26 +13,38 @@ type JobPayload = {
 export async function createPostJob(payload: JobPayload) {
   log('[CREATE_POST] Starting job with payload', payload);
 
+  // Normalizar target_channel para respetar el CHECK de generated_posts
+  const targetChannel = payload.target_channel || 'IG_FB';
+
+  // Lo que va a la DB: solo 'IG', 'FB' o 'BOTH'
+  const channelTargetDb =
+    targetChannel === 'IG_ONLY'
+      ? 'IG'
+      : targetChannel === 'FB_ONLY'
+      ? 'FB'
+      : 'BOTH'; // IG_FB o cualquier otra cosa → BOTH
+
   // 1) Elegir producto desde tabla `products`
-const { data: products, error: productError } = await supabaseAdmin
-  .from('products')
-  .select('*')
-  .eq('is_active', true)
-  .gt('stock', 0)
-  .not('image_url', 'is', null)
-  .not('image_url', 'eq', '')
-  .limit(50); // cogemos varios para poder randomizar
+  const { data: products, error: productError } = await supabaseAdmin
+    .from('products')
+    .select('*')
+    .eq('is_active', true)
+    .gt('stock', 0)
+    .not('image_url', 'is', null)
+    .not('image_url', 'eq', '')
+    .limit(50); // cogemos varios para poder randomizar
 
-if (productError) {
-  logError('[CREATE_POST] Error fetching products', productError);
-  throw productError;
-}
+  if (productError) {
+    logError('[CREATE_POST] Error fetching products', productError);
+    throw productError;
+  }
 
-if (!products || products.length === 0) {
-  logError('[CREATE_POST] No valid products with image_url and stock > 0 found');
-  throw new Error('No valid products with image_url and stock > 0 found');
-}
-
+  if (!products || products.length === 0) {
+    logError(
+      '[CREATE_POST] No valid products with image_url and stock > 0 found',
+    );
+    throw new Error('No valid products with image_url and stock > 0 found');
+  }
 
   // Elegir uno al azar (más adelante Epsilon-Greedy)
   const randomIndex = Math.floor(Math.random() * products.length);
@@ -44,7 +56,6 @@ if (!products || products.length === 0) {
     price: product.verkaufspreis,
   });
 
-  // Parámetros fijos por ahora (luego los usaremos para Epsilon-Greedy / A/B)
   const style = 'fun' as const;
   const format = 'IG_CAROUSEL' as const;
   const angle = 'xmas_gift' as const;
@@ -68,7 +79,6 @@ if (!products || products.length === 0) {
     (product.image as string | null) ||
     null;
 
-  // 2) Llamar a OpenAI con System Prompt de Dogonauts
   const userContent = `
 Du erhältst jetzt die Produktdaten und den Kampagnenkontext für einen Social-Media-Post.
 
@@ -128,13 +138,17 @@ das im System Prompt beschrieben ist.
     throw err;
   }
 
-  // Validación básica del JSON recibido
-  if (!json.hook || !json.body || !json.cta || !json.hashtag_block || !json.image_prompt) {
+  if (
+    !json.hook ||
+    !json.body ||
+    !json.cta ||
+    !json.hashtag_block ||
+    !json.image_prompt
+  ) {
     logError('[CREATE_POST] Invalid JSON structure from OpenAI', json);
     throw new Error('Invalid JSON structure received from OpenAI');
   }
 
-  // 3) Insertar en generated_posts (incluyendo image_prompt e image_url)
   const { data: insertData, error: insertError } = await supabaseAdmin
     .from('generated_posts')
     .insert({
@@ -146,10 +160,10 @@ das im System Prompt beschrieben ist.
       body: json.body,
       cta: json.cta,
       hashtag_block: json.hashtag_block,
-      image_prompt: json.image_prompt, // para uso futuro (Image Styler / templates)
-      image_url: imageUrl,             // imagen base del producto
+      image_prompt: json.image_prompt,
+      image_url: imageUrl,
       status: 'DRAFT',
-      channel_target: payload.target_channel || 'IG_FB',
+      channel_target: channelTargetDb, // ← aquí usamos el valor compatible con el CHECK
     })
     .select('*')
     .single();
@@ -165,7 +179,6 @@ das im System Prompt beschrieben ist.
     productName: product.product_name,
   });
 
-  // 4) Componer imagen con Sharp y guardar composed_image_url
   try {
     const composedUrl = await composeImageForPost(insertData);
 
@@ -181,9 +194,8 @@ das im System Prompt beschrieben ist.
   } catch (error) {
     logError(
       '[CREATE_POST] Falló la composición Sharp (fallback a image_url)',
-      error
+      error,
     );
-    // No rompemos el job: el post sigue siendo usable con image_url
   }
 
   return { product, post: json, generatedPost: insertData };

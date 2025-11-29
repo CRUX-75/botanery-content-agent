@@ -1,4 +1,5 @@
 // src/workers/mainWorker.ts
+
 import { supabaseAdmin } from '../lib/supabase';
 import { log, logError } from '../lib/logger';
 import { createPostJob } from './createPost';
@@ -24,8 +25,19 @@ async function pollJobs() {
       .limit(1)
       .single<JobRow>();
 
-    // Si no hay jobs pendientes, salimos en silencio
-    if (error || !job) {
+    if (error) {
+      // PGRST116 = "no rows", eso sí lo podemos ignorar sin log
+      const code = (error as any).code;
+      if (code === 'PGRST116') {
+        return;
+      }
+
+      logError('[WORKER] Error fetching pending job', error);
+      return;
+    }
+
+    if (!job) {
+      // No debería pasar si no hay error, pero por si acaso
       return;
     }
 
