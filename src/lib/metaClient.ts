@@ -21,15 +21,22 @@ interface FacebookPostParams {
 }
 
 class MetaGraphClient {
-  private client: AxiosInstance;
+  private client: AxiosInstance;              // IG / general (user token)
+  private fbClient: AxiosInstance;           // FB Page (page token)
   private accessToken: string;
   private instagramAccountId: string;
   private facebookPageId: string;
+  private facebookPageAccessToken: string;
 
   constructor() {
+    // Token base (user) para IG y llamadas generales
     this.accessToken = config.meta.accessToken;
     this.instagramAccountId = config.meta.instagramBusinessAccountId;
+
+    // Page ID + Page Token específicos para Facebook
     this.facebookPageId = config.meta.facebookPageId;
+    this.facebookPageAccessToken =
+      config.meta.facebookPageAccessToken || this.accessToken;
 
     if (!this.accessToken) {
       throw new Error('[META] META_ACCESS_TOKEN is not configured');
@@ -40,7 +47,13 @@ class MetaGraphClient {
     if (!this.facebookPageId) {
       log('[META] Warning: FACEBOOK_PAGE_ID is not configured, FB posts will fail');
     }
+    if (!this.facebookPageAccessToken) {
+      log(
+        '[META] Warning: FACEBOOK_PAGE_ACCESS_TOKEN is not configured, using META_ACCESS_TOKEN for FB (may fail)'
+      );
+    }
 
+    // Cliente para IG (user token)
     this.client = axios.create({
       baseURL: 'https://graph.facebook.com/v18.0',
       params: {
@@ -48,7 +61,20 @@ class MetaGraphClient {
       },
     });
 
-    log('[META] MetaGraphClient initialized');
+    // Cliente para FB página (page token)
+    this.fbClient = axios.create({
+      baseURL: 'https://graph.facebook.com/v18.0',
+      params: {
+        access_token: this.facebookPageAccessToken,
+      },
+    });
+
+    log('[META] MetaGraphClient initialized', {
+      igAccountId: this.instagramAccountId,
+      fbPageId: this.facebookPageId,
+      igTokenPrefix: this.accessToken.slice(0, 12),
+      fbPageTokenPrefix: this.facebookPageAccessToken.slice(0, 12),
+    });
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -279,9 +305,11 @@ class MetaGraphClient {
    */
   async publishFacebookPost(params: FacebookPostParams): Promise<string> {
     try {
-      log('[META] Publishing Facebook post');
+      log('[META] Publishing Facebook post', {
+        pageId: this.facebookPageId,
+      });
 
-      const { data } = await this.client.post(
+      const { data } = await this.fbClient.post(
         `/${this.facebookPageId}/feed`,
         {
           message: params.message,
@@ -305,7 +333,7 @@ class MetaGraphClient {
     }
   }
 
-    /**
+  /**
    * Publicar una imagen en Facebook (single image con caption)
    */
   async publishFacebookImage({
@@ -316,9 +344,12 @@ class MetaGraphClient {
     caption: string;
   }): Promise<string> {
     try {
-      log('[META] Publishing Facebook image', { image_url });
+      log('[META] Publishing Facebook image', {
+        pageId: this.facebookPageId,
+        image_url,
+      });
 
-      const { data } = await this.client.post(
+      const { data } = await this.fbClient.post(
         `/${this.facebookPageId}/photos`,
         {
           url: image_url,
@@ -343,12 +374,13 @@ class MetaGraphClient {
   }
 
   // ────────────────────────────────────────────────────────────────
-  // Facebook – Carousel (placeholder, igual que antes)
+  // Facebook – Carousel (placeholder/simple)
   // ────────────────────────────────────────────────────────────────
 
   /**
    * Publicar carousel en Facebook (múltiples imágenes).
-   * Nota: en producción deberías subir las imágenes primero y usar sus IDs.
+   * Versión simplificada: por ahora publica solo la primera imagen
+   * como post de foto normal con el mensaje.
    */
   async publishFacebookCarousel(
     images: string[],
@@ -356,27 +388,30 @@ class MetaGraphClient {
   ): Promise<string> {
     try {
       log('[META] Publishing Facebook carousel', {
+        pageId: this.facebookPageId,
         imageCount: images.length,
       });
 
-      const attachedMedia = images.map((url) => ({
-        media_fbid: url, // TODO: en producción, reemplazar con IDs reales de media
-      }));
+      const firstImage = images[0];
 
-      const { data } = await this.client.post(
-        `/${this.facebookPageId}/feed`,
+      const { data } = await this.fbClient.post(
+        `/${this.facebookPageId}/photos`,
         {
-          message: message,
-          attached_media: JSON.stringify(attachedMedia),
+          url: firstImage,
+          caption: message,
+          published: true,
         }
       );
 
-      if (!data?.id) {
-        throw new Error('[META] Failed to publish Facebook carousel (no id)');
+      if (!data?.post_id) {
+        throw new Error('[META] Failed to publish Facebook carousel (no post_id)');
       }
 
-      log('[META] ✅ Facebook carousel published', { postId: data.id });
-      return data.id;
+      log('[META] ✅ Facebook "carousel" (single photo) published', {
+        postId: data.post_id,
+      });
+
+      return data.post_id;
     } catch (error) {
       logError(
         '[META] Failed to publish Facebook carousel',
@@ -387,8 +422,8 @@ class MetaGraphClient {
   }
 
   // ────────────────────────────────────────────────────────────────
-// Insights (Instagram)
-// ────────────────────────────────────────────────────────────────
+  // Insights (Instagram)
+  // ────────────────────────────────────────────────────────────────
 
   /**
    * Obtener métricas de un post de Instagram (v24+ compatible)
@@ -429,12 +464,12 @@ class MetaGraphClient {
       const impressions = reach;
 
       return {
-        impressions,   // proxy para tu calculatePerformanceScore
+        impressions, // proxy para tu calculatePerformanceScore
         reach,
         saves: saved,
         likes,
         comments,
-        shares: 0,     // IG no expone shares estándar de forma directa
+        shares: 0, // IG no expone shares estándar de forma directa
       };
     } catch (error) {
       logError('[META] Failed to get Instagram insights', {
@@ -445,14 +480,12 @@ class MetaGraphClient {
     }
   }
 
-
-
   /**
    * Obtener métricas de un post de Facebook
    */
   async getFacebookPostInsights(postId: string): Promise<any> {
     try {
-      const { data } = await this.client.get(`/${postId}`, {
+      const { data } = await this.fbClient.get(`/${postId}`, {
         params: {
           fields:
             'likes.summary(true),comments.summary(true),shares,reactions.summary(true)',

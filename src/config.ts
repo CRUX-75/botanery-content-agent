@@ -26,10 +26,11 @@ export const config = {
   openai: {
     apiKey: requireEnv('OPENAI_API_KEY'),
   },
-  meta: {
-    accessToken: process.env.META_ACCESS_TOKEN ?? '',
-    instagramBusinessAccountId: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ?? '',
-    facebookPageId: process.env.FACEBOOK_PAGE_ID ?? '',
+    meta: {
+    accessToken: process.env.META_ACCESS_TOKEN || '',
+    instagramBusinessAccountId: process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID || '',
+    facebookPageId: process.env.FACEBOOK_PAGE_ID || '',
+    facebookPageAccessToken: process.env.FACEBOOK_PAGE_ACCESS_TOKEN || '',
   },
   server: {
     port: parseInt(process.env.PORT || '3000', 10),
