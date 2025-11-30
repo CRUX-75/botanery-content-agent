@@ -5,6 +5,13 @@ import { log, logError } from './logger';
 
 const DOGONAUTS_BLUE = { r: 10, g: 30, b: 60, alpha: 1 };
 
+// Medidas estándar para IG portrait
+const CANVAS_WIDTH = 1080;
+const CANVAS_HEIGHT = 1350;
+
+// Tamaño de la “tarjeta” del producto (cuadro blanco)
+const PRODUCT_CARD_SIZE = 960;
+
 export async function composeBrandedSingle(originalUrl: string): Promise<string> {
   if (!originalUrl) {
     throw new Error('composeBrandedSingle: originalUrl is required');
@@ -33,22 +40,51 @@ export async function composeBrandedSingle(originalUrl: string): Promise<string>
 
     const productBuffer = Buffer.from(await productRes.arrayBuffer());
 
-    // 2) Preparar imagen del producto (centrada, con fondo transparente)
-    const productPng = await sharp(productBuffer)
+    // 2) Preparar imagen del producto dentro de una “tarjeta” blanca grande
+    //
+    // - fit: 'contain' para no cortar cabezas de perros ni producto
+    // - fondo blanco para look “catalogo/pro”
+    const productCard = await sharp(productBuffer)
       .resize({
-        width: 800,
-        height: 800,
+        width: PRODUCT_CARD_SIZE,
+        height: PRODUCT_CARD_SIZE,
         fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 },
+        background: { r: 255, g: 255, b: 255, alpha: 1 },
       })
+      .jpeg({ quality: 95 })
+      .toBuffer();
+
+    // 2.1) Sombra suave para la tarjeta del producto
+    const shadowSize = PRODUCT_CARD_SIZE + 60;
+    const shadow = await sharp({
+      create: {
+        width: shadowSize,
+        height: shadowSize,
+        channels: 4,
+        background: { r: 0, g: 0, b: 0, alpha: 0.35 },
+      },
+    })
+      .blur(40)
       .png()
       .toBuffer();
 
+    // Posición del producto: centrado horizontalmente, un poco más arriba
+    // para dejar espacio abajo a futuro (texto / badges / etc.)
+    const productLeft = Math.round((CANVAS_WIDTH - PRODUCT_CARD_SIZE) / 2);
+    const productTop = 150; // antes estaba casi centrado; ahora lo “subimos” un poco
+
     const composites: sharp.OverlayOptions[] = [
+      // Sombra primero (debajo de la tarjeta)
       {
-        input: productPng,
-        top: Math.round((1350 - 800) / 2),
-        left: Math.round((1080 - 800) / 2),
+        input: shadow,
+        left: productLeft - Math.round((shadowSize - PRODUCT_CARD_SIZE) / 2),
+        top: productTop - Math.round((shadowSize - PRODUCT_CARD_SIZE) / 2),
+      },
+      // Tarjeta del producto encima
+      {
+        input: productCard,
+        left: productLeft,
+        top: productTop,
       },
     ];
 
@@ -58,14 +94,14 @@ export async function composeBrandedSingle(originalUrl: string): Promise<string>
         const logoBuffer = Buffer.from(await logoRes.arrayBuffer());
 
         const logoPng = await sharp(logoBuffer)
-          .resize({ width: 220 }) // ancho fijo, alto proporcional
+          .resize({ width: 200 }) // un poco más pequeño y fino
           .png()
           .toBuffer();
 
         composites.push({
           input: logoPng,
-          top: 40,
-          left: 40,
+          top: 60,
+          left: 60,
         });
       } catch (err) {
         logError(
@@ -75,11 +111,12 @@ export async function composeBrandedSingle(originalUrl: string): Promise<string>
       }
     }
 
-    // 4) Crear lienzo y componer
+    // 4) Crear fondo elegante: azul Dogonauts uniforme (limpio y pro)
+    // Si luego queremos, aquí podemos cambiar a un gradient SVG.
     const finalBuffer = await sharp({
       create: {
-        width: 1080,
-        height: 1350,
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
         channels: 4,
         background: DOGONAUTS_BLUE,
       },
