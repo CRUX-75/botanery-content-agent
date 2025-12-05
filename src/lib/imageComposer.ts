@@ -59,32 +59,32 @@ export async function composeImageForPost(post: any): Promise<string> {
       log('[SHARP] Logo NO encontrado en ninguna ruta, se compone solo con producto', { logoCandidates });
     }
 
-   // 4️⃣ Crear overlay del producto (centrado manualmente) y logo (si existe)
-const productLeft = Math.floor((1080 - 960) / 2); // 60
-const productTop = Math.floor((1080 - 960) / 2);  // 60
+    // 4️⃣ Posiciones
+    const productLeft = Math.floor((1080 - 960) / 2); // 60
+    const productTop = Math.floor((1080 - 960) / 2);  // 60
 
-const overlays: sharp.OverlayOptions[] = [
-  {
-    input: resizedProduct,
-    left: productLeft,
-    top: productTop,
-  },
-];
+    const overlays: sharp.OverlayOptions[] = [
+      {
+        input: resizedProduct,
+        left: productLeft,
+        top: productTop,
+      },
+    ];
 
-if (logoPath) {
-  overlays.push({
-    input: logoPath,
-    gravity: 'southeast',
-  });
-}
+    if (logoPath) {
+      overlays.push({
+        input: logoPath,
+        gravity: 'southeast',
+      });
+    }
 
-    // 5️⃣ Crear lienzo base con fondo beige claro
+    // 5️⃣ Crear lienzo con fondo pastel (#F7EFE4)
     const composed = await sharp({
       create: {
         width: 1080,
         height: 1080,
         channels: 3,
-        background: '#F3F3F3',
+        background: '#F7EFE4',
       },
     })
       .composite(overlays)
@@ -95,7 +95,7 @@ if (logoPath) {
     const filePath = `composed/${post.id}.png`;
 
     const { error: uploadError } = await supabaseAdmin.storage
-      .from('dogonauts-assets')
+      .from('botanery-assets') // asegúrate de usar tu bucket correcto
       .upload(filePath, composed, {
         contentType: 'image/png',
         upsert: true,
@@ -107,7 +107,7 @@ if (logoPath) {
 
     // 7️⃣ Obtener URL pública
     const { data: urlData } = supabaseAdmin.storage
-      .from('dogonauts-assets')
+      .from('botanery-assets')
       .getPublicUrl(filePath);
 
     const publicUrl = urlData.publicUrl;

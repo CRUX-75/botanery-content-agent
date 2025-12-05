@@ -19,7 +19,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Exponer puerto
-EXPOSE 3000
+EXPOSE 3001
 
 # Iniciar aplicación compilada
 CMD ["node", "dist/index.js"]

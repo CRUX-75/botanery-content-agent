@@ -1,4 +1,5 @@
 // src/lib/prompt-generator.ts
+
 import { openai } from './openai';
 import { ProductRow } from './product-selector';
 
@@ -10,30 +11,34 @@ interface PostContent {
 
 export async function generatePostContent(product: ProductRow): Promise<PostContent> {
   const prompt = `
-Eres el copywriter de Dogonauts, una tienda online de productos para perros.
+Du bist Copywriter:in für Botanery – eine moderne Marke für stilvolle, dekorative Pflanzen im Interior-Bereich.
 
-PRODUCTO:
-- Nombre: ${product.product_name}
-- Descripción: ${product.description || 'N/A'}
-- Precio: ${product.verkaufspreis ?? 'N/A'}€
-- Categoría: ${product.product_category || 'N/A'}
-- Punto de venta: ${product.selling_point || 'N/A'}
+PRODUKT:
+- Name: ${product.product_name}
+- Beschreibung: ${product.description || 'N/A'}
+- Preis: ${product.verkaufspreis ?? 'N/A'} €
+- Kategorie: ${product.product_category || 'N/A'}
+- Stil oder Nutzen: ${product.selling_point || 'N/A'}
 
-Escribe texto para redes sociales en ALEMÁN.
+Bitte schreibe zwei kurze Social-Media-Texte auf DEUTSCH – einen für Instagram, einen für Facebook.
 
-Requisitos:
-- Tono: cercano, alegre, útil para dueños de perros
-- Incluye un hook fuerte en la primera línea
-- Menciona 2–3 beneficios concretos
-- CTA: "Jetzt im Shop sichern 🐾"
-- Máximo 150 palabras
-- 5–7 hashtags relevantes para perros, bienestar y Dogonauts.
+Anforderungen:
+- Max. 150 Wörter.
+- Hook zu Beginn (visuell, ruhig, ästhetisch, inspirierend).
+- 2–3 konkrete Nutzen oder Designaspekte.
+- CTA: z.B. "Jetzt entdecken auf botanery.de"
+- Tono: elegant, ruhig, hochwertig, verständlich.
+- Zielgruppe: Menschen mit Interesse an schönem Wohnen, Pflanzenästhetik, minimalistischem Design.
+- Stil: ästhetisch, leicht emotional, aber nicht übertrieben.
 
-Responde SOLO con JSON:
+Füge am Ende 5–7 passende Hashtags hinzu (z. B. #Botanery, #InteriorLovers, #Pflanzenliebe).
+
+Antworte ausschließlich im folgenden JSON-Format:
+
 {
-  "caption_ig": "texto para Instagram",
-  "caption_fb": "texto para Facebook (puede ser casi igual)",
-  "style": "breve descripción del tono/estilo usado"
+  "caption_ig": "Text für Instagram",
+  "caption_fb": "Text für Facebook",
+  "style": "kurze Beschreibung des verwendeten Stils"
 }
 `;
 
@@ -50,6 +55,6 @@ Responde SOLO con JSON:
   return {
     caption_ig: parsed.caption_ig || '',
     caption_fb: parsed.caption_fb || parsed.caption_ig || '',
-    style: parsed.style || 'default'
+    style: parsed.style || 'elegant-natural'
   };
 }

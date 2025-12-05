@@ -3,7 +3,7 @@
 import { supabaseAdmin } from '../lib/supabase';
 import { openai } from '../lib/openai';
 import { log, logError } from '../lib/logger';
-import { DOGONAUTS_CONTENT_SYSTEM_PROMPT } from '../agent/systemPrompt';
+import {  BOTANERY_CONTENT_SYSTEM_PROMPT } from '../agent/systemPrompt';
 import { composeBrandedSingle } from '../lib/compose-branded-single';
 
 type JobPayload = {
@@ -108,7 +108,7 @@ das im System Prompt beschrieben ist.
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: DOGONAUTS_CONTENT_SYSTEM_PROMPT },
+        { role: 'system', content:  BOTANERY_CONTENT_SYSTEM_PROMPT },
         { role: 'user', content: userContent },
       ],
       response_format: { type: 'json_object' },

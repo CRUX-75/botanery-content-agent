@@ -1,7 +1,7 @@
 {
-  "name": "dogonauts-content-generator",
+  "name": "botanery-content-agent",
   "version": "1.0.0",
-  "description": "Sistema de generación de contenido para Dogonauts",
+  "description": "Sistema de generación de contenido para Botanery",
   "main": "dist/index.js",
   "type": "commonjs",
   "scripts": {
@@ -19,9 +19,10 @@
     "run-publish-post-job": "ts-node scripts/run-publish-post-job.ts",
     "run-feedback-collect-job": "ts-node scripts/run-feedback-collect-job.ts",
     "migrate-images": "ts-node scripts/migrate-product-images.ts"
+    
   },
   "keywords": [
-    "dogonauts",
+    "botanery",
     "automation",
     "content-generation"
   ],
@@ -40,7 +41,7 @@
     "@types/node": "^20.10.5",
     "nodemon": "^3.0.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.3.3"
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=20.0.0",
