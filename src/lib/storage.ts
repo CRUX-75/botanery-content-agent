@@ -1,0 +1,1 @@
+export const BOTANERY_BUCKET = 'botanery-assets';

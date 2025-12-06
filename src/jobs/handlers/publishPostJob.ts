@@ -8,10 +8,31 @@ interface JobLike {
   attempts?: number;
   payload: {
     postId?: string;
-    // por si en el futuro mandas más cosas
     [key: string]: any;
   };
 }
+
+type ChannelTarget = 'IG' | 'FB' | 'BOTH';
+
+type GeneratedPostRow = {
+  id: string;
+  status: string;
+  product_id?: string | null;
+  channel_target?: string | null;
+  visual_format?: string | null;
+  carousel_images?: string[] | null;
+  composed_image_url?: string | null;
+  image_url?: string | null;
+  caption_ig?: string | null;
+  caption_fb?: string | null;
+  hook?: string | null;
+  body?: string | null;
+  cta?: string | null;
+  hashtag_block?: string | null;
+  ig_media_id?: string | null;
+  fb_post_id?: string | null;
+  channel?: string | null;
+};
 
 export async function publishPostJob(job: JobLike): Promise<void> {
   console.log('\n--- PUBLISH POST JOB START ---');
@@ -28,20 +49,22 @@ export async function publishPostJob(job: JobLike): Promise<void> {
 
     console.log(`🔍 Buscando post ${postId} en estado DRAFT...`);
 
-    const { data: post, error: postError } = await supabaseAdmin
+    const { data: postData, error: postError } = await supabaseAdmin
       .from('generated_posts')
       .select('*')
       .eq('id', postId)
       .eq('status', 'DRAFT')
       .single();
 
-    if (postError || !post) {
+    if (postError || !postData) {
       console.error('❌ Error fetching post:', postError);
       throw new Error(`Post ${postId} no encontrado o no está en estado DRAFT`);
     }
 
+    const post = postData as unknown as GeneratedPostRow;
+
     console.log(
-      `📝 Post encontrado: ${postId} — producto_id=${post.product_id}, visual_format=${post.visual_format}`
+      `📝 Post encontrado: ${postId} — producto_id=${post.product_id ?? 'null'}, visual_format=${post.visual_format ?? 'null'}`
     );
 
     // Pasar a estado QUEUED antes de publicar
@@ -50,48 +73,79 @@ export async function publishPostJob(job: JobLike): Promise<void> {
       .update({ status: 'QUEUED' })
       .eq('id', postId);
 
-    const channelTarget: 'IG' | 'FB' | 'BOTH' =
-      post.channel_target || 'BOTH';
+    // ─────────────────────────────────────
+    // Canal objetivo
+    // ─────────────────────────────────────
+    const rawTarget = (post.channel_target ?? 'BOTH') as string;
 
+    const publishToIG =
+      rawTarget === 'IG' ||
+      rawTarget === 'IG_ONLY' ||
+      rawTarget === 'BOTH' ||
+      rawTarget === 'IG_FB';
+
+    const publishToFB =
+      rawTarget === 'FB' ||
+      rawTarget === 'FB_ONLY' ||
+      rawTarget === 'BOTH' ||
+      rawTarget === 'IG_FB';
+
+    const channelTarget: ChannelTarget =
+      publishToIG && publishToFB ? 'BOTH' : publishToIG ? 'IG' : 'FB';
+
+    // ─────────────────────────────────────
+    // Caption
+    // ─────────────────────────────────────
+    const captionIG = buildCaption(post, 'IG');
+    const captionFB = buildCaption(post, 'FB');
+
+    // ─────────────────────────────────────
+    // Detectar carrusel
+    // ─────────────────────────────────────
+    const carouselImages = (post.carousel_images ?? null) as string[] | null;
     const isCarousel =
-      post.visual_format === 'carousel' &&
-      Array.isArray(post.carousel_images) &&
-      post.carousel_images.length > 1;
+      Array.isArray(carouselImages) && carouselImages.length >= 2;
+
+    console.log(
+      `📡 channel_target=${rawTarget} → resolved=${channelTarget} | isCarousel=${isCarousel}`
+    );
 
     let igMediaId: string | null = null;
     let fbPostId: string | null = null;
 
-    console.log(
-      `📡 channel_target=${channelTarget} | isCarousel=${isCarousel}`
-    );
-
     // ─────────────────────────────────────
     // Instagram
     // ─────────────────────────────────────
-    if (channelTarget === 'IG' || channelTarget === 'BOTH') {
+    if (publishToIG) {
       if (isCarousel) {
         console.log(
-          `📸 Publicando carrusel en Instagram con ${post.carousel_images.length} imágenes...`
+          `📸 Publicando CARRUSEL en Instagram con ${carouselImages!.length} imágenes...`
         );
 
+        const imagesPayload = carouselImages!.map((url) => ({
+          image_url: url,
+        }));
+
         igMediaId = await metaClient.publishInstagramCarousel(
-          post.carousel_images.map((url: string) => ({
-            image_url: url,
-          })),
-          post.caption_ig || post.caption_fb || ''
+          imagesPayload,
+          captionIG
         );
       } else {
         console.log('🖼️ Publicando imagen simple en Instagram...');
 
-        if (!post.composed_image_url) {
+        const imageUrl =
+          (post.composed_image_url && post.composed_image_url.trim()) ||
+          (post.image_url && post.image_url.trim());
+
+        if (!imageUrl) {
           throw new Error(
-            `Post ${postId} no tiene composed_image_url para Instagram`
+            `Post ${postId} no tiene composed_image_url ni image_url para Instagram`
           );
         }
 
         igMediaId = await metaClient.publishInstagramSingle({
-          image_url: post.composed_image_url,
-          caption: post.caption_ig || post.caption_fb || '',
+          image_url: imageUrl,
+          caption: captionIG,
         });
       }
 
@@ -101,28 +155,32 @@ export async function publishPostJob(job: JobLike): Promise<void> {
     // ─────────────────────────────────────
     // Facebook
     // ─────────────────────────────────────
-    if (channelTarget === 'FB' || channelTarget === 'BOTH') {
-      if (isCarousel) {
+    if (publishToFB) {
+      if (isCarousel && metaClient.publishFacebookCarousel) {
         console.log(
-          `📸 Publicando carrusel en Facebook con ${post.carousel_images.length} imágenes...`
+          `📸 Publicando CARRUSEL en Facebook con ${carouselImages!.length} imágenes...`
         );
 
         fbPostId = await metaClient.publishFacebookCarousel(
-          post.carousel_images,
-          post.caption_fb || post.caption_ig || ''
+          carouselImages!,
+          captionFB
         );
       } else {
         console.log('🖼️ Publicando imagen simple en Facebook...');
 
-        if (!post.composed_image_url) {
+        const imageUrl =
+          (post.composed_image_url && post.composed_image_url.trim()) ||
+          (post.image_url && post.image_url.trim());
+
+        if (!imageUrl) {
           throw new Error(
-            `Post ${postId} no tiene composed_image_url para Facebook`
+            `Post ${postId} no tiene composed_image_url ni image_url para Facebook`
           );
         }
 
         fbPostId = await metaClient.publishFacebookImage({
-          image_url: post.composed_image_url,
-          caption: post.caption_fb || post.caption_ig || '',
+          image_url: imageUrl,
+          caption: captionFB,
         });
       }
 
@@ -150,6 +208,7 @@ export async function publishPostJob(job: JobLike): Promise<void> {
 
     // ─────────────────────────────────────
     // Crear registro base en post_feedback
+    // (dejamos tu esquema tal cual)
     // ─────────────────────────────────────
     const { error: feedbackError } = await supabaseAdmin
       .from('post_feedback')
@@ -163,7 +222,7 @@ export async function publishPostJob(job: JobLike): Promise<void> {
 
     if (feedbackError) {
       console.error('⚠️ Error creando post_feedback:', feedbackError);
-      // no tiramos el job por esto, pero lo dejamos logueado
+      // no tiramos el job por esto, solo log
     }
 
     // ─────────────────────────────────────
@@ -196,4 +255,41 @@ export async function publishPostJob(job: JobLike): Promise<void> {
 
     throw err;
   }
+}
+
+/* -------------------------------------------------------
+   HELPERS
+------------------------------------------------------- */
+
+function buildCaption(post: GeneratedPostRow, target: 'IG' | 'FB'): string {
+  const direct =
+    target === 'IG'
+      ? post.caption_ig || post.caption_fb
+      : post.caption_fb || post.caption_ig;
+
+  if (direct && direct.trim().length > 0) {
+    return direct;
+  }
+
+  const parts: (string | null | undefined)[] = [];
+
+  if (post.hook) parts.push(post.hook);
+  if (post.body) {
+    if (parts.length) parts.push('');
+    parts.push(post.body);
+  }
+  if (post.cta) {
+    parts.push('');
+    parts.push(post.cta);
+  }
+  if (post.hashtag_block) {
+    parts.push('');
+    parts.push(post.hashtag_block);
+  }
+
+  const caption = parts
+    .filter((p) => p !== undefined && p !== null)
+    .join('\n');
+
+  return caption || '';
 }

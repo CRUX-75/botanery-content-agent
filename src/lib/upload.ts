@@ -1,7 +1,7 @@
 // src/lib/upload.ts
 import { supabaseAdmin } from './supabase';
 
-const BUCKET_NAME = 'dogonauts-assets'; // ajusta si tu bucket se llama distinto
+const BUCKET_NAME = 'botanery-assets'; // ajusta si tu bucket se llama distinto
 
 export async function uploadToSupabase(
   buffer: Buffer,
