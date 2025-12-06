@@ -46,7 +46,8 @@ app.get('/healthz', async (_req: Request, res: Response) => {
 // Crear job de tipo CREATE_POST
 app.post('/jobs/create', async (req: Request, res: Response) => {
   try {
-    const { target_channel = 'IG_FB', format } = req.body || {};
+    const { payload = {} } = req.body;
+    const { target_channel = 'IG_FB', format } = payload;
     const { data, error } = await supabaseAdmin
       .from('job_queue')
       .insert({
