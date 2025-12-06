@@ -46,13 +46,24 @@ app.get('/healthz', async (_req: Request, res: Response) => {
 // Crear job de tipo CREATE_POST
 app.post('/jobs/create', async (req: Request, res: Response) => {
   try {
-    const { payload = {} } = req.body;
-    const { target_channel = 'IG_FB', format } = payload;
+    // ✅ Leemos TODO lo que nos interesa del body
+    const {
+      format = 'IG_SINGLE',      // si no viene, por defecto single
+      style = 'fun',             // default razonable
+      target_channel = 'IG_FB',  // por defecto IG + FB
+    } = req.body || {};
+
+    const payload = {
+      format,
+      style,
+      target_channel,
+    };
+
     const { data, error } = await supabaseAdmin
       .from('job_queue')
       .insert({
         job_type: 'CREATE_POST',
-        payload: { target_channel, format },
+        payload,
         status: 'PENDING',
       })
       .select()
@@ -60,7 +71,7 @@ app.post('/jobs/create', async (req: Request, res: Response) => {
 
     if (error) throw error;
 
-    log('[API] CREATE_POST job created', { jobId: data.id });
+    log('[API] CREATE_POST job created', { jobId: data.id, payload });
     res.json({ success: true, job: data });
   } catch (error) {
     logError('[API] Failed to create job', error);
@@ -73,14 +84,20 @@ app.post('/jobs/create', async (req: Request, res: Response) => {
 // Crear job de tipo PUBLISH_POST
 app.post('/jobs/publish', async (req: Request, res: Response) => {
   try {
-    const { post_id, force = false } = req.body || {};
+    const { post_id, postId, force = false } = req.body || {};
+
+    // ✅ Aceptamos ambos por compatibilidad, pero normalizamos a postId
+    const finalPostId = postId || post_id;
+
+    if (!finalPostId) {
+      throw new Error('postId es obligatorio en el body');
+    }
 
     const { data, error } = await supabaseAdmin
       .from('job_queue')
       .insert({
         job_type: 'PUBLISH_POST',
-        // 👇 publishPostJob.ts espera payload.postId
-        payload: { postId: post_id, force },
+        payload: { postId: finalPostId, force },
         status: 'PENDING',
       })
       .select()
@@ -88,7 +105,7 @@ app.post('/jobs/publish', async (req: Request, res: Response) => {
 
     if (error) throw error;
 
-    log('[API] PUBLISH_POST job created', { jobId: data.id });
+    log('[API] PUBLISH_POST job created', { jobId: data.id, payload: data.payload });
     res.json({ success: true, job: data });
   } catch (error) {
     logError('[API] Failed to create publish job', error);
