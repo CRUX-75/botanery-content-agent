@@ -1,3 +1,5 @@
+// src/index.ts
+
 import express, { Request, Response } from 'express';
 import { config } from './config';
 import { log, logError } from './lib/logger';
@@ -12,7 +14,7 @@ app.get('/healthz', async (_req: Request, res: Response) => {
   try {
     const { data, error } = await supabaseAdmin
       .from('job_queue')
-      .select('count')
+      .select('id')
       .limit(1)
       .single();
 
@@ -27,15 +29,16 @@ app.get('/healthz', async (_req: Request, res: Response) => {
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      service: 'dogonauts-content-generator',
-      database: 'connected',
+      service: 'botanery-content-agent',
+      database: data ? 'connected' : 'no-rows',
       stats: stats || {},
     });
   } catch (error) {
     logError('Health check failed', error);
     res.status(500).json({
       status: 'error',
-      message: error instanceof Error ? error.message : 'Database connection failed',
+      message:
+        error instanceof Error ? error.message : 'Database connection failed',
     });
   }
 });
@@ -76,7 +79,8 @@ app.post('/jobs/publish', async (req: Request, res: Response) => {
       .from('job_queue')
       .insert({
         job_type: 'PUBLISH_POST',
-        payload: { post_id, force },
+        // 👇 publishPostJob.ts espera payload.postId
+        payload: { postId: post_id, force },
         status: 'PENDING',
       })
       .select()
@@ -166,7 +170,7 @@ app.listen(PORT, () => {
   log(`Health check: http://localhost:${PORT}/healthz`);
 
   // Arrancar worker principal
-  startWorker().catch((error) => {
+  startWorker().catch((error: unknown) => {
     logError('[WORKER] Failed to start worker', error);
   });
 });
