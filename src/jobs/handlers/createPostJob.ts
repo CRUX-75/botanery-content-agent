@@ -52,91 +52,92 @@ export async function createPostJob(job: any) {
     }
     console.log(`🎛️ advanced_visual flag = ${useAdvancedVisual}`);
 
-    // 3) Obtener template
-    const template = getTemplateForProduct(product);
+ // 3) Obtener template
+const template = getTemplateForProduct(product);
+console.log(
+  `📐 Template detectado: ${product.product_category ?? 'n/a'} → ${
+    template.type
+  }`,
+);
+
+let visualAssets: VisualAssets;
+let visualFormat = 'single_legacy';
+let templateVersion = 'v1_basic';
+
+if (useAdvancedVisual) {
+  console.log('🚀 Usando pipeline avanzado (v2)');
+  const adv = await generateAdvancedVisuals(
+    product as ProductLike,
+    template,
+  );
+
+  visualAssets = {
+    mainImage: adv.mainImage,
+    carouselImages: adv.carouselImages ?? null,
+  };
+  visualFormat = template.type; // p.ej. 'single_modern' | 'carousel_4'
+  templateVersion = adv.templateVersion;
+} else {
+  console.log('📦 Usando pipeline legacy');
+  const buffer = await generateBasicImage(product as ProductLike);
+  const url = await uploadToSupabase(buffer, `legacy-${product.id}.png`);
+
+  visualAssets = {
+    mainImage: url,
+    carouselImages: null,
+  };
+  visualFormat = 'single_legacy';
+  templateVersion = 'v1_basic';
+}
+
+// 3.1) ¿Este job quiere carrusel?
+const wantsCarousel = requestedFormat === 'IG_CAROUSEL';
+
+// Normalizamos carouselImages:
+// - Si el pipeline avanzado ya da slides → las usamos.
+// - Si NO, pero el job pide IG_CAROUSEL → fallback: 4x la misma imagen.
+let carouselImages: string[] | null = null;
+
+if (wantsCarousel) {
+  if (
+    Array.isArray(visualAssets.carouselImages) &&
+    visualAssets.carouselImages.length >= 2
+  ) {
+    carouselImages = visualAssets.carouselImages;
+  } else {
     console.log(
-      `📐 Template detectado: ${product.product_category ?? 'n/a'} → ${
-        template.type
-      }`,
+      '[CREATE_POST] No carouselImages from advanced pipeline. Using fallback (4x mainImage).',
     );
-
-    let visualAssets: VisualAssets;
-    let visualFormat = 'single_legacy';
-    let templateVersion = 'v1_basic';
-
-    if (useAdvancedVisual) {
-      console.log('🚀 Usando pipeline avanzado (v2)');
-      const adv = await generateAdvancedVisuals(
-        product as ProductLike,
-        template,
-      );
-
-      visualAssets = {
-        mainImage: adv.mainImage,
-        carouselImages: adv.carouselImages ?? null,
-      };
-      visualFormat = template.type; // p.ej. 'single_modern' | 'carousel_4'
-      templateVersion = adv.templateVersion;
-    } else {
-      console.log('📦 Usando pipeline legacy');
-      const buffer = await generateBasicImage(product as ProductLike);
-      const url = await uploadToSupabase(buffer, `legacy-${product.id}.png`);
-
-      visualAssets = {
-        mainImage: url,
-        carouselImages: null,
-      };
-      visualFormat = 'single_legacy';
-      templateVersion = 'v1_basic';
+    carouselImages = Array(4).fill(visualAssets.mainImage);
+    if (visualFormat === 'single_legacy') {
+      visualFormat = 'carousel_4';
     }
+  }
+} else {
+  carouselImages = visualAssets.carouselImages;
+}
 
-    // 3.1) ¿Este job quiere carrusel?
-    const wantsCarousel = requestedFormat === 'IG_CAROUSEL';
+const hasCarousel =
+  Array.isArray(carouselImages) && carouselImages.length >= 2;
 
-    // Normalizamos carouselImages:
-    // - Si el pipeline avanzado ya da slides → las usamos.
-    // - Si NO, pero el job pide IG_CAROUSEL → fallback: 4x la misma imagen.
-    let carouselImages: string[] | null = null;
+const format: 'IG_SINGLE' | 'IG_CAROUSEL' = hasCarousel
+  ? 'IG_CAROUSEL'
+  : 'IG_SINGLE';
 
-    if (wantsCarousel) {
-      if (
-        Array.isArray(visualAssets.carouselImages) &&
-        visualAssets.carouselImages.length >= 2
-      ) {
-        carouselImages = visualAssets.carouselImages;
-      } else {
-        console.log(
-          '[CREATE_POST] No carouselImages from advanced pipeline. Using fallback (4x mainImage).',
-        );
-        carouselImages = Array(4).fill(visualAssets.mainImage);
-        if (visualFormat === 'single_legacy') {
-          visualFormat = 'carousel_4';
-        }
-      }
-    } else {
-      carouselImages = visualAssets.carouselImages;
-    }
+const slideCount = hasCarousel ? carouselImages!.length : 1;
 
-    const hasCarousel =
-      Array.isArray(carouselImages) && carouselImages.length >= 2;
-
-    const format: 'IG_SINGLE' | 'IG_CAROUSEL' = hasCarousel
-      ? 'IG_CAROUSEL'
-      : 'IG_SINGLE';
-
-    const slideCount = hasCarousel ? carouselImages!.length : 1;
-
-    console.log('[CREATE_POST] Visual decision', {
-      useAdvancedVisual,
-      visualFormat,
-      templateVersion,
-      requestedFormat,
-      wantsCarousel,
-      hasCarousel,
-      format,
-      slideCount,
-    });
-
+console.log('[CREATE_POST] Visual decision', {
+  useAdvancedVisual,
+  visualFormat,
+  templateVersion,
+  requestedFormat,
+  wantsCarousel,
+  hasCarousel,
+  format,
+  slideCount,
+  carouselImagesLength: carouselImages?.length ?? 0,
+  carouselImages: carouselImages, // 👈 Agregué esto para debug
+});
     // 4) Generar copy
     const postContent = await generatePostContent(product);
 

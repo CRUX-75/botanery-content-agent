@@ -81,23 +81,28 @@ app.post('/jobs/create', async (req: Request, res: Response) => {
   }
 });
 
-// Crear job de tipo PUBLISH_POST
+// Crear job de tipo PUBLISH_POST (ADAPTADO)
 app.post('/jobs/publish', async (req: Request, res: Response) => {
   try {
     const { post_id, postId, force = false } = req.body || {};
 
-    // ✅ Aceptamos ambos por compatibilidad, pero normalizamos a postId
+    // ✅ Normalizamos a postId si viene alguno
     const finalPostId = postId || post_id;
 
-    if (!finalPostId) {
-      throw new Error('postId es obligatorio en el body');
+    // ⚡ CAMBIO CLAVE: Ya no lanzamos error si no hay ID.
+    // Construimos el payload dinámicamente.
+    const payload: Record<string, any> = { force };
+
+    if (finalPostId) {
+      payload.postId = finalPostId;
     }
+    // Si no hay finalPostId, el payload va sin ID y el Worker buscará el DRAFT más antiguo.
 
     const { data, error } = await supabaseAdmin
       .from('job_queue')
       .insert({
         job_type: 'PUBLISH_POST',
-        payload: { postId: finalPostId, force },
+        payload, 
         status: 'PENDING',
       })
       .select()
