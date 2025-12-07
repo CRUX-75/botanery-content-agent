@@ -30,6 +30,7 @@ class MetaGraphClient {
   private fbClient: AxiosInstance;
   private fbPageAccessToken: string;
   private facebookPageId: string;
+  private facebookEnabled: boolean;
 
   constructor() {
     // Tokens de entorno
@@ -37,11 +38,11 @@ class MetaGraphClient {
     this.instagramAccountId = config.meta.instagramBusinessAccountId;
 
     const pageId = config.meta.facebookPageId;
-    const pageToken =
-      config.meta.facebookPageAccessToken || this.igAccessToken; // fallback por si acaso
+    const pageToken = config.meta.facebookPageAccessToken || '';
 
     this.facebookPageId = pageId;
     this.fbPageAccessToken = pageToken;
+    this.facebookEnabled = !!(this.facebookPageId && this.fbPageAccessToken);
 
     if (!this.igAccessToken) {
       throw new Error('[META] META_ACCESS_TOKEN is not configured');
@@ -49,38 +50,41 @@ class MetaGraphClient {
     if (!this.instagramAccountId) {
       throw new Error('[META] INSTAGRAM_BUSINESS_ACCOUNT_ID is not configured');
     }
-    if (!this.facebookPageId) {
+
+    if (!this.facebookEnabled) {
       log(
-        '[META] Warning: FACEBOOK_PAGE_ID is not configured, FB posts will fail'
+        '[META] Facebook is NOT fully configured. Facebook calls will be skipped.',
       );
-    }
-    if (!this.fbPageAccessToken) {
-      log(
-        '[META] Warning: FACEBOOK_PAGE_ACCESS_TOKEN is not configured, FB posts will use IG token'
-      );
+    } else {
+      log('[META] Facebook is enabled for page publishing.', {
+        fbPageId: this.facebookPageId,
+      });
     }
 
     // Cliente para IG (usa token IG)
     this.igClient = axios.create({
-      baseURL: 'https://graph.facebook.com/v18.0',
+      baseURL: 'https://graph.facebook.com/v24.0',
       params: {
         access_token: this.igAccessToken,
       },
     });
 
-    // Cliente para Facebook Page (usa PAGE ACCESS TOKEN)
+    // Cliente para Facebook Page (usa PAGE ACCESS TOKEN si está habilitado)
     this.fbClient = axios.create({
-      baseURL: 'https://graph.facebook.com/v18.0',
-      params: {
-        access_token: this.fbPageAccessToken,
-      },
+      baseURL: 'https://graph.facebook.com/v24.0',
+      params: this.facebookEnabled
+        ? { access_token: this.fbPageAccessToken }
+        : {},
     });
 
     log('[META] MetaGraphClient initialized', {
       igAccountId: this.instagramAccountId,
-      fbPageId: this.facebookPageId,
+      fbPageId: this.facebookPageId || '(disabled)',
       igTokenPrefix: this.igAccessToken.slice(0, 10),
-      fbPageTokenPrefix: this.fbPageAccessToken.slice(0, 10),
+      fbPageTokenPrefix: this.fbPageAccessToken
+        ? this.fbPageAccessToken.slice(0, 10)
+        : '(none)',
+      facebookEnabled: this.facebookEnabled,
     });
   }
 
@@ -122,13 +126,13 @@ class MetaGraphClient {
 
       if (statusCode === 'ERROR') {
         throw new Error(
-          `[META] Media container ${creationId} entered ERROR status`
+          `[META] Media container ${creationId} entered ERROR status`,
         );
       }
 
       if (attempt === maxAttempts) {
         throw new Error(
-          `[META] Media container ${creationId} not ready after ${maxAttempts} attempts`
+          `[META] Media container ${creationId} not ready after ${maxAttempts} attempts`,
         );
       }
 
@@ -147,7 +151,7 @@ class MetaGraphClient {
 
   async publishInstagramCarousel(
     images: InstagramCarouselImage[],
-    caption: string
+    caption: string,
   ): Promise<string> {
     try {
       log('[META] Publishing Instagram carousel', {
@@ -162,12 +166,12 @@ class MetaGraphClient {
           {
             image_url: image.image_url,
             is_carousel_item: true,
-          }
+          },
         );
 
         if (!data?.id) {
           throw new Error(
-            '[META] Failed to create carousel item container (no id)'
+            '[META] Failed to create carousel item container (no id)',
           );
         }
 
@@ -183,12 +187,12 @@ class MetaGraphClient {
           media_type: 'CAROUSEL',
           children: containerIds,
           caption: caption,
-        }
+        },
       );
 
       if (!carouselData?.id) {
         throw new Error(
-          '[META] Failed to create carousel container (no id)'
+          '[META] Failed to create carousel container (no id)',
         );
       }
 
@@ -203,12 +207,12 @@ class MetaGraphClient {
         `/${this.instagramAccountId}/media_publish`,
         {
           creation_id: carouselCreationId,
-        }
+        },
       );
 
       if (!publishData?.id) {
         throw new Error(
-          '[META] Failed to publish Instagram carousel (no media id)'
+          '[META] Failed to publish Instagram carousel (no media id)',
         );
       }
 
@@ -220,7 +224,7 @@ class MetaGraphClient {
     } catch (error) {
       logError(
         '[META] Failed to publish Instagram carousel',
-        this.getErrorPayload(error)
+        this.getErrorPayload(error),
       );
       throw error;
     }
@@ -231,7 +235,7 @@ class MetaGraphClient {
   // ────────────────────────────────────────────────────────────────
 
   async publishInstagramSingle(
-    params: InstagramSingleImageParams
+    params: InstagramSingleImageParams,
   ): Promise<string> {
     try {
       log('[META] Publishing Instagram single image', {
@@ -243,12 +247,12 @@ class MetaGraphClient {
         {
           image_url: params.image_url,
           caption: params.caption,
-        }
+        },
       );
 
       if (!containerData?.id) {
         throw new Error(
-          '[META] Failed to create IG media container (no id)'
+          '[META] Failed to create IG media container (no id)',
         );
       }
 
@@ -261,12 +265,12 @@ class MetaGraphClient {
         `/${this.instagramAccountId}/media_publish`,
         {
           creation_id: creationId,
-        }
+        },
       );
 
       if (!publishData?.id) {
         throw new Error(
-          '[META] Failed to publish Instagram single image (no media id)'
+          '[META] Failed to publish Instagram single image (no media id)',
         );
       }
 
@@ -278,27 +282,38 @@ class MetaGraphClient {
     } catch (error) {
       logError(
         '[META] Failed to publish Instagram single image',
-        this.getErrorPayload(error)
+        this.getErrorPayload(error),
       );
       throw error;
     }
   }
 
   // ────────────────────────────────────────────────────────────────
-  // Facebook – Posts & Photos (usa fbClient con PAGE TOKEN)
+  // Facebook – Posts & Photos (NO-OP si FB no está habilitado)
   // ────────────────────────────────────────────────────────────────
 
   async publishFacebookPost(params: FacebookPostParams): Promise<string> {
+    if (!this.facebookEnabled) {
+      log(
+        '[META] Facebook publishing is disabled. Skipping publishFacebookPost.',
+        { messagePreview: params.message?.slice(0, 50) },
+      );
+      return 'fb_disabled';
+    }
+
     try {
       log('[META] Publishing Facebook post', {
         pageId: this.facebookPageId,
       });
 
-      const { data } = await this.fbClient.post(`/${this.facebookPageId}/feed`, {
-        message: params.message,
-        link: params.link,
-        published: params.published !== false,
-      });
+      const { data } = await this.fbClient.post(
+        `/${this.facebookPageId}/feed`,
+        {
+          message: params.message,
+          link: params.link,
+          published: params.published !== false,
+        },
+      );
 
       if (!data?.id) {
         throw new Error('[META] Failed to publish Facebook post (no id)');
@@ -309,7 +324,7 @@ class MetaGraphClient {
     } catch (error) {
       logError(
         '[META] Failed to publish Facebook post',
-        this.getErrorPayload(error)
+        this.getErrorPayload(error),
       );
       throw error;
     }
@@ -322,6 +337,14 @@ class MetaGraphClient {
     image_url: string;
     caption: string;
   }): Promise<string> {
+    if (!this.facebookEnabled) {
+      log(
+        '[META] Facebook publishing is disabled. Skipping publishFacebookImage.',
+        { image_url },
+      );
+      return 'fb_disabled';
+    }
+
     try {
       log('[META] Publishing Facebook image', {
         pageId: this.facebookPageId,
@@ -334,19 +357,22 @@ class MetaGraphClient {
           url: image_url,
           caption,
           published: true,
-        }
+        },
       );
 
-      if (!data?.post_id) {
-        throw new Error('[META] Failed to publish Facebook image (no post_id)');
+      const postId = data?.post_id || data?.id;
+      if (!postId) {
+        throw new Error(
+          '[META] Failed to publish Facebook image (no id/post_id)',
+        );
       }
 
-      log('[META] ✅ Facebook image published', { postId: data.post_id });
-      return data.post_id;
+      log('[META] ✅ Facebook image published', { postId });
+      return postId;
     } catch (error) {
       logError(
         '[META] Failed to publish Facebook image',
-        this.getErrorPayload(error)
+        this.getErrorPayload(error),
       );
       throw error;
     }
@@ -354,8 +380,16 @@ class MetaGraphClient {
 
   async publishFacebookCarousel(
     images: string[],
-    message: string
+    message: string,
   ): Promise<string> {
+    if (!this.facebookEnabled) {
+      log(
+        '[META] Facebook publishing is disabled. Skipping publishFacebookCarousel.',
+        { imageCount: images.length },
+      );
+      return 'fb_disabled';
+    }
+
     try {
       log('[META] Publishing Facebook carousel', {
         pageId: this.facebookPageId,
@@ -367,13 +401,18 @@ class MetaGraphClient {
         media_fbid: url,
       }));
 
-      const { data } = await this.fbClient.post(`/${this.facebookPageId}/feed`, {
-        message,
-        attached_media: JSON.stringify(attachedMedia),
-      });
+      const { data } = await this.fbClient.post(
+        `/${this.facebookPageId}/feed`,
+        {
+          message,
+          attached_media: JSON.stringify(attachedMedia),
+        },
+      );
 
       if (!data?.id) {
-        throw new Error('[META] Failed to publish Facebook carousel (no id)');
+        throw new Error(
+          '[META] Failed to publish Facebook carousel (no id)',
+        );
       }
 
       log('[META] ✅ Facebook carousel published', { postId: data.id });
@@ -381,7 +420,7 @@ class MetaGraphClient {
     } catch (error) {
       logError(
         '[META] Failed to publish Facebook carousel',
-        this.getErrorPayload(error)
+        this.getErrorPayload(error),
       );
       throw error;
     }
@@ -435,6 +474,19 @@ class MetaGraphClient {
   }
 
   async getFacebookPostInsights(postId: string): Promise<any> {
+    if (!this.facebookEnabled) {
+      log(
+        '[META] Facebook insights are disabled. Returning zero metrics.',
+        { postId },
+      );
+      return {
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        reactions: 0,
+      };
+    }
+
     try {
       const { data } = await this.fbClient.get(`/${postId}`, {
         params: {
