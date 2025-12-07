@@ -1,6 +1,5 @@
 // src/jobs/handlers/createPostJob.ts
 
-import { featureFlags } from '../../lib/feature-flags';
 import { supabaseAdmin } from '../../lib/supabase';
 import { getTemplateForProduct } from '../../lib/visual-templates';
 import { generateBasicImage, ProductLike } from '../../lib/visual-generator';
@@ -17,7 +16,6 @@ type VisualAssets = {
 type CreatePostPayload = {
   format?: 'IG_SINGLE' | 'IG_CAROUSEL';
   style?: string;
-  // Admite valores legacy ('IG', 'FB', 'BOTH') y los nuevos válidos para la DB
   target_channel?: 'IG' | 'FB' | 'BOTH' | 'IG_ONLY' | 'FB_ONLY' | 'IG_FB';
 };
 
@@ -37,24 +35,7 @@ export async function createPostJob(job: any) {
       `🎯 Producto recibido del selector: ${product.product_name} (${product.id})`,
     );
 
-    // 2) FEATURE FLAG: FORZAMOS TRUE PARA PROBAR CARRUSELES
-    // En producción deberías reactivar la lógica del flag, pero ahora queremos ver las imágenes.
-    let useAdvancedVisual = true; 
-    
-    /* try {
-      useAdvancedVisual = await featureFlags.shouldUseFeature(
-        'advanced_visuals_enabled',
-        product.id.toString(),
-      );
-    } catch (e) {
-      console.warn('⚠️ Error flag, defaulting to false', e);
-      useAdvancedVisual = false;
-    } 
-    */
-    
-    console.log(`🎛️ advanced_visual flag (FORZADO) = ${useAdvancedVisual}`);
-
-    // 3) Obtener template
+    // 2) Template
     const template = getTemplateForProduct(product);
     console.log(
       `📐 Template detectado: ${product.product_category ?? 'n/a'} → ${
@@ -62,13 +43,16 @@ export async function createPostJob(job: any) {
       }`,
     );
 
-    let visualAssets: VisualAssets;
+    // 3) Generar visual base (mainImage)
+    let visualAssets: VisualAssets = {
+      mainImage: '',
+      carouselImages: null,
+    };
     let visualFormat = 'single_legacy';
     let templateVersion = 'v1_basic';
 
-    if (useAdvancedVisual) {
-      console.log('🚀 Usando pipeline avanzado (v2)');
-      // Esto es lo que genera las 4 imágenes reales
+    try {
+      console.log('🚀 Intentando pipeline avanzado (v2)');
       const adv = await generateAdvancedVisuals(
         product as ProductLike,
         template,
@@ -78,10 +62,13 @@ export async function createPostJob(job: any) {
         mainImage: adv.mainImage,
         carouselImages: adv.carouselImages ?? null,
       };
-      visualFormat = template.type; 
+      visualFormat = template.type;
       templateVersion = adv.templateVersion;
-    } else {
-      console.log('📦 Usando pipeline legacy');
+    } catch (e) {
+      console.warn(
+        '⚠️ Pipeline avanzado falló o está en stub, usando legacy:',
+        e,
+      );
       const buffer = await generateBasicImage(product as ProductLike);
       const url = await uploadToSupabase(buffer, `legacy-${product.id}.png`);
 
@@ -93,43 +80,44 @@ export async function createPostJob(job: any) {
       templateVersion = 'v1_basic';
     }
 
-    // 3.1) ¿Este job quiere carrusel?
+    // 3.1) Decidir si queremos carrusel
     const wantsCarousel = requestedFormat === 'IG_CAROUSEL';
 
     let carouselImages: string[] | null = null;
+    let format: 'IG_SINGLE' | 'IG_CAROUSEL' = 'IG_SINGLE';
+    let slideCount = 1;
 
     if (wantsCarousel) {
-      // Si el pipeline V2 nos dio imágenes, las usamos
+      // 1º Intentamos usar imágenes del pipeline avanzado
       if (
         Array.isArray(visualAssets.carouselImages) &&
         visualAssets.carouselImages.length >= 2
       ) {
         carouselImages = visualAssets.carouselImages;
+        format = 'IG_CAROUSEL';
+        slideCount = carouselImages.length;
       } else {
-        // FALLBACK: Si falló V2 o estamos en legacy, repetimos la imagen 4 veces
+        // 2º Fallback BESTIA: duplicar la imagen principal 4 veces
         console.log(
-          '[CREATE_POST] Fallback: Duplicando mainImage para cumplir con IG_CAROUSEL.',
+          '[CREATE_POST] Fallback carrusel: duplicando mainImage 4 veces.',
         );
         carouselImages = Array(4).fill(visualAssets.mainImage);
+        format = 'IG_CAROUSEL';
+        slideCount = 4;
         if (visualFormat === 'single_legacy') {
           visualFormat = 'carousel_4';
         }
       }
     } else {
-      // Si no quiere carrusel, respetamos lo que venga (generalmente null)
-      carouselImages = visualAssets.carouselImages;
+      // No se pidió carrusel → single normal
+      format = 'IG_SINGLE';
+      slideCount = 1;
+      carouselImages = null;
     }
 
-    const hasCarousel =
-      Array.isArray(carouselImages) && carouselImages.length >= 2;
-
-    const format: 'IG_SINGLE' | 'IG_CAROUSEL' = hasCarousel
-      ? 'IG_CAROUSEL'
-      : 'IG_SINGLE';
-
-    const slideCount = hasCarousel ? carouselImages!.length : 1;
-
     console.log('[CREATE_POST] Visual decision', {
+      requestedFormat,
+      wantsCarousel,
       format,
       slideCount,
       carouselImagesLength: carouselImages?.length ?? 0,
@@ -138,10 +126,9 @@ export async function createPostJob(job: any) {
     // 4) Generar copy
     const postContent = await generatePostContent(product);
 
-    // 5) Canal objetivo – normalizado y por defecto solo IG
+    // 5) Canal objetivo – por defecto solo IG
     const rawChannel = requestedChannel ?? 'IG_ONLY';
 
-    // Normalizamos a los valores que acepta la DB: 'IG_FB' | 'IG_ONLY' | 'FB_ONLY'
     const channelTarget: 'IG_FB' | 'IG_ONLY' | 'FB_ONLY' =
       rawChannel === 'IG_ONLY' || rawChannel === 'FB_ONLY' || rawChannel === 'IG_FB'
         ? rawChannel
@@ -167,15 +154,15 @@ export async function createPostJob(job: any) {
         caption_ig: postContent.caption_ig,
         caption_fb: postContent.caption_fb,
         composed_image_url: visualAssets.mainImage,
-        carousel_images: carouselImages, // ¡AQUÍ SE GUARDAN LAS URLS!
+        carousel_images: carouselImages,
         visual_format: visualFormat,
         template_version: templateVersion,
-        use_advanced_visual: useAdvancedVisual,
         format,
         slide_count: slideCount,
         status: 'DRAFT',
         style: postContent.style,
         channel_target: channelTarget,
+        use_advanced_visual: visualFormat !== 'single_legacy',
       })
       .select()
       .single();
