@@ -80,12 +80,12 @@ export async function createPostJob(job: any) {
       templateVersion = 'v1_basic';
     }
 
-    // 3.1) Decidir si queremos carrusel
-    const wantsCarousel = requestedFormat === 'IG_CAROUSEL';
+    // 3.1) Modo bestia: SIEMPRE queremos carrusel de 4 slides
+    const wantsCarousel = true; // 👈 ignoramos lo que diga el payload
 
     let carouselImages: string[] | null = null;
-    let format: 'IG_SINGLE' | 'IG_CAROUSEL' = 'IG_SINGLE';
-    let slideCount = 1;
+    let format: 'IG_SINGLE' | 'IG_CAROUSEL' = 'IG_CAROUSEL';
+    let slideCount = 4;
 
     if (wantsCarousel) {
       // 1º Intentamos usar imágenes del pipeline avanzado
@@ -97,7 +97,7 @@ export async function createPostJob(job: any) {
         format = 'IG_CAROUSEL';
         slideCount = carouselImages.length;
       } else {
-        // 2º Fallback BESTIA: duplicar la imagen principal 4 veces
+        // 2º Fallback: duplicar la imagen principal 4 veces
         console.log(
           '[CREATE_POST] Fallback carrusel: duplicando mainImage 4 veces.',
         );
@@ -109,7 +109,7 @@ export async function createPostJob(job: any) {
         }
       }
     } else {
-      // No se pidió carrusel → single normal
+      // (no se usará, pero lo dejamos por claridad)
       format = 'IG_SINGLE';
       slideCount = 1;
       carouselImages = null;
@@ -126,19 +126,10 @@ export async function createPostJob(job: any) {
     // 4) Generar copy
     const postContent = await generatePostContent(product);
 
-    // 5) Canal objetivo – por defecto solo IG
+    // 5) Canal objetivo – forzado a IG_ONLY
     const rawChannel = requestedChannel ?? 'IG_ONLY';
 
-    const channelTarget: 'IG_FB' | 'IG_ONLY' | 'FB_ONLY' =
-      rawChannel === 'IG_ONLY' || rawChannel === 'FB_ONLY' || rawChannel === 'IG_FB'
-        ? rawChannel
-        : rawChannel === 'IG'
-        ? 'IG_ONLY'
-        : rawChannel === 'FB'
-        ? 'FB_ONLY'
-        : rawChannel === 'BOTH'
-        ? 'IG_FB'
-        : 'IG_ONLY';
+    const channelTarget: 'IG_FB' | 'IG_ONLY' | 'FB_ONLY' = 'IG_ONLY'; // 👈 ignoramos IG_FB del payload
 
     console.log('[CREATE_POST] Channel target decision', {
       requestedChannel,
@@ -157,11 +148,11 @@ export async function createPostJob(job: any) {
         carousel_images: carouselImages,
         visual_format: visualFormat,
         template_version: templateVersion,
-        format,
-        slide_count: slideCount,
+        format, // IG_CAROUSEL
+        slide_count: slideCount, // 4
         status: 'DRAFT',
         style: postContent.style,
-        channel_target: channelTarget,
+        channel_target: channelTarget, // IG_ONLY
         use_advanced_visual: visualFormat !== 'single_legacy',
       })
       .select()

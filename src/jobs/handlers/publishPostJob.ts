@@ -23,16 +23,15 @@ export async function publishPostJob(job: JobLike): Promise<void> {
     const explicitPostId =
       job.payload?.postId || job.payload?.post_id || null;
 
-    // Por defecto: coge el primer DRAFT (FIFO)
+    // Por defecto: coge el ÚLTIMO DRAFT (LIFO)
     let query = supabaseAdmin
       .from('generated_posts')
       .select('*')
       .eq('status', 'DRAFT')
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false }) // 👈 AHORA el más nuevo
       .limit(1)
       .single();
 
-    // Si viene un ID explícito, priorizamos ese
     if (explicitPostId) {
       query = supabaseAdmin
         .from('generated_posts')
@@ -45,7 +44,7 @@ export async function publishPostJob(job: JobLike): Promise<void> {
     console.log(
       explicitPostId
         ? `🔍 Buscando post ${explicitPostId}...`
-        : '🔍 Buscando PRIMER post DRAFT (FIFO)...',
+        : '🔍 Buscando ÚLTIMO post DRAFT (LIFO)...',
     );
 
     const { data: post, error: postError } = await query;
@@ -59,20 +58,14 @@ export async function publishPostJob(job: JobLike): Promise<void> {
       `📝 Post encontrado para publicar: ${post.id} (Formato: ${post.format})`,
     );
 
-    // Marcamos como QUEUED antes de publicar
     await supabaseAdmin
       .from('generated_posts')
       .update({ status: 'QUEUED' })
       .eq('id', post.id);
 
-    // ─────────────────────────────────────────────────────
-    // Target Logic – IG only, Facebook desactivado
-    // Ignoramos completamente lo que venga en channel_target
-    // y forzamos siempre publicación solo en Instagram.
-    // ─────────────────────────────────────────────────────
+    // IG ONLY
     const rawTarget: string = post.channel_target || 'IG_ONLY';
     const channelTarget: 'IG' = 'IG';
-
     const publishToIG = true;
     const publishToFB = false;
 
@@ -83,7 +76,6 @@ export async function publishPostJob(job: JobLike): Promise<void> {
       publishToFB,
     });
 
-    // DETECTAR CARRUSEL
     const carouselImages = post.carousel_images as string[] | null;
     const isCarousel =
       post.format === 'IG_CAROUSEL' &&
@@ -102,7 +94,6 @@ export async function publishPostJob(job: JobLike): Promise<void> {
       (post.body as string | null) ||
       '';
 
-    // Imagen principal (para single post o portada de carrusel)
     const mainImageUrl: string | null =
       (post.composed_image_url?.trim?.() ||
         post.image_url?.trim?.()) ??
@@ -114,8 +105,6 @@ export async function publishPostJob(job: JobLike): Promise<void> {
         console.log(
           `📸 Publicando CARRUSEL en Instagram (${carouselImages!.length} slides)...`,
         );
-
-        // Mapeamos al formato que pide MetaClient
         const imagesPayload = carouselImages!.map((url) => ({
           image_url: url,
         }));
@@ -139,12 +128,10 @@ export async function publishPostJob(job: JobLike): Promise<void> {
       }
     }
 
-    // --- FACEBOOK (apagado) ---
+    // FB apagado
     if (publishToFB) {
       console.log('🖼️ Publicando en Facebook...');
-      if (!mainImageUrl) {
-        throw new Error('No image_url found for FB');
-      }
+      if (!mainImageUrl) throw new Error('No image_url found for FB');
 
       try {
         fbPostId = await metaClient.publishFacebookImage({
@@ -160,7 +147,6 @@ export async function publishPostJob(job: JobLike): Promise<void> {
       }
     }
 
-    // Finalizar: marcar como publicado
     await supabaseAdmin
       .from('generated_posts')
       .update({
@@ -168,11 +154,10 @@ export async function publishPostJob(job: JobLike): Promise<void> {
         published_at: new Date().toISOString(),
         ig_media_id: igMediaId,
         fb_post_id: fbPostId,
-        channel: channelTarget, // 'IG'
+        channel: channelTarget,
       })
       .eq('id', post.id);
 
-    // Crear registro de feedback si no existe
     await supabaseAdmin
       .from('post_feedback')
       .upsert(
@@ -185,7 +170,6 @@ export async function publishPostJob(job: JobLike): Promise<void> {
         { onConflict: 'post_id', ignoreDuplicates: true },
       );
 
-    // Marcar job como COMPLETED
     await supabaseAdmin
       .from('job_queue')
       .update({
