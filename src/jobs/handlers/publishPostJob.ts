@@ -20,19 +20,17 @@ export async function publishPostJob(job: JobLike): Promise<void> {
   const attempts = job.attempts ?? 0;
 
   try {
-    // 1) postId es OPCIONAL: Si viene lo usamos, si no, buscamos el primer DRAFT
     const explicitPostId = job.payload?.postId || job.payload?.post_id || null;
 
     let query = supabaseAdmin
       .from('generated_posts')
       .select('*')
       .eq('status', 'DRAFT')
-      .order('created_at', { ascending: true }) // El más antiguo primero (FIFO)
+      .order('created_at', { ascending: true })
       .limit(1)
       .single();
 
     if (explicitPostId) {
-      // Si n8n envió un ID explícito, lo usamos
       query = supabaseAdmin
         .from('generated_posts')
         .select('*')
@@ -43,74 +41,89 @@ export async function publishPostJob(job: JobLike): Promise<void> {
 
     console.log(
       explicitPostId
-        ? `🔍 Buscando post ${explicitPostId} en estado DRAFT...`
-        : '🔍 No se recibió ID. Buscando el PRIMER post disponible en estado DRAFT...'
+        ? `🔍 Buscando post ${explicitPostId}...`
+        : '🔍 Buscando PRIMER post DRAFT (FIFO)...'
     );
 
     const { data: post, error: postError } = await query;
 
     if (postError || !post) {
       console.error('❌ Error fetching post:', postError);
-      throw new Error(
-        explicitPostId
-          ? `Post ${explicitPostId} no encontrado o no está en estado DRAFT`
-          : 'No hay posts en estado DRAFT para publicar'
-      );
+      throw new Error('No hay posts DRAFT disponibles.');
     }
 
-    console.log(
-      `📝 Post encontrado para publicar: ${post.id} (Formato: ${post.visual_format})`
-    );
+    console.log(`📝 Post encontrado: ${post.id} (Format: ${post.format})`);
 
-    // Marcamos como QUEUED para evitar que otro proceso lo tome
+    // Actualizamos a QUEUED
     await supabaseAdmin
       .from('generated_posts')
       .update({ status: 'QUEUED' })
       .eq('id', post.id);
 
-    // --- Lógica de Target (IG vs FB) ---
-    const rawTarget: string = post.channel_target || 'IG_FB';
-    const channelTarget: 'IG' | 'FB' | 'BOTH' =
-      rawTarget === 'IG_ONLY' ? 'IG' : rawTarget === 'FB_ONLY' ? 'FB' : 'BOTH';
+    // Target Logic – IG only, FB totalmente apagado
+const rawTarget: string = post.channel_target || 'IG_ONLY';
 
-    const publishToIG = channelTarget === 'IG' || channelTarget === 'BOTH';
-    const publishToFB = channelTarget === 'FB' || channelTarget === 'BOTH';
+// aunque venga IG_FB o FB_ONLY de la DB, forzamos siempre IG
+const channelTarget: 'IG' = 'IG';
+
+const publishToIG = true;
+const publishToFB = false;
+
+    // DETECTAR CARRUSEL
+    const carouselImages = post.carousel_images as string[] | null;
+    const isCarousel = post.format === 'IG_CAROUSEL' && Array.isArray(carouselImages) && carouselImages.length >= 2;
 
     let igMediaId: string | null = null;
     let fbPostId: string | null = null;
 
-    // Helper simple para caption
     const captionIG = post.caption_ig || post.body || '';
     const captionFB = post.caption_fb || post.body || '';
-    
-    // URL de la imagen (prioridad a la compuesta, luego la simple)
-    const imageUrl = (post.composed_image_url && post.composed_image_url.trim()) || 
-                     (post.image_url && post.image_url.trim());
 
-    if (!imageUrl) throw new Error(`El post ${post.id} no tiene imagen válida.`);
+    // Imagen principal (para single post o portada)
+    const mainImageUrl = (post.composed_image_url?.trim()) || (post.image_url?.trim());
 
-    // --- Publicar en Instagram ---
+    // --- INSTAGRAM ---
     if (publishToIG) {
-        console.log('🖼️ Publicando en Instagram...');
-        // Asumimos imagen simple por ahora para simplificar
-        igMediaId = await metaClient.publishInstagramSingle({
-          image_url: imageUrl,
-          caption: captionIG,
-        });
-        console.log(`✅ Instagram OK: ${igMediaId}`);
+        if (isCarousel) {
+            console.log(`📸 Publicando CARRUSEL en Instagram (${carouselImages!.length} slides)...`);
+            
+            // Mapeamos al formato que pide MetaClient
+            const imagesPayload = carouselImages!.map((url) => ({ image_url: url }));
+            
+            igMediaId = await metaClient.publishInstagramCarousel(
+                imagesPayload,
+                captionIG
+            );
+            console.log(`✅ IG Carousel OK: ${igMediaId}`);
+        } else {
+            console.log('🖼️ Publicando SINGLE en Instagram...');
+            if (!mainImageUrl) throw new Error('No image_url found for IG Single');
+            
+            igMediaId = await metaClient.publishInstagramSingle({
+                image_url: mainImageUrl,
+                caption: captionIG,
+            });
+            console.log(`✅ IG Single OK: ${igMediaId}`);
+        }
     }
 
-    // --- Publicar en Facebook ---
+    // --- FACEBOOK ---
     if (publishToFB) {
+        // Nota: Meta API de FB a veces es complicada con carruseles directos.
+        // Por seguridad, publicamos la imagen principal o el carrusel si tu lib lo soporta.
+        // Aquí usaremos Single Image para FB para asegurar éxito, o puedes descomentar si tienes la función.
+        
         console.log('🖼️ Publicando en Facebook...');
+        if (!mainImageUrl) throw new Error('No image_url found for FB');
+
         fbPostId = await metaClient.publishFacebookImage({
-          image_url: imageUrl,
-          caption: captionFB,
+             image_url: mainImageUrl,
+             caption: captionFB,
         });
         console.log(`✅ Facebook OK: ${fbPostId}`);
     }
 
-    // --- Actualizar Post a PUBLISHED ---
+    // Finalizar
     await supabaseAdmin
       .from('generated_posts')
       .update({
@@ -121,29 +134,19 @@ export async function publishPostJob(job: JobLike): Promise<void> {
       })
       .eq('id', post.id);
 
-    // ─────────────────────────────────────
-    // Crear registro base en post_feedback (si no existe)
-    // ─────────────────────────────────────
-    // CORRECCIÓN: Usamos upsert con opciones en lugar de .onConflict() encadenado
     await supabaseAdmin
       .from('post_feedback')
       .upsert(
-        {
-          post_id: post.id,
-          metrics: {},
-          perf_score: 0,
-          collection_count: 0,
-        },
+        { post_id: post.id, metrics: {}, perf_score: 0, collection_count: 0 },
         { onConflict: 'post_id', ignoreDuplicates: true }
       );
 
-    // --- Actualizar Job a COMPLETED ---
     await supabaseAdmin
       .from('job_queue')
       .update({ status: 'COMPLETED', completed_at: new Date().toISOString() })
       .eq('id', job.id);
 
-    console.log(`✅ Proceso finalizado con éxito para post ${post.id}`);
+    console.log(`✅ Job completado para post ${post.id}`);
     console.log('--- PUBLISH POST JOB END ---\n');
 
   } catch (err: any) {
