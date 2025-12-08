@@ -1,298 +1,259 @@
 // src/jobs/handlers/feedbackCollectJob.ts
 
-import type { AxiosError } from 'axios';
-import { supabaseAdmin as supabase } from '../../lib/supabase';
+import { supabaseAdmin } from '../../lib/supabase';
 import { metaClient } from '../../lib/metaClient';
 
-interface Job {
+interface JobLike {
   id: string;
-  attempts: number;
-  payload: any;
-}
-
-interface PostMetrics {
-  likes?: number;
-  comments?: number;
-  saves?: number;
-  shares?: number;
-  reach?: number;
-  impressions?: number;
-  engagement_rate?: number;
-}
-
-interface GeneratedPost {
-  id: string;
-  product_id: string;
-  ig_media_id: string | null;
-  fb_post_id: string | null;
-  channel: string | null;
-  visual_format: string | null;
-  published_at: string | null;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function calculatePerformanceScore(metrics: PostMetrics): number {
-  // Score ponderado (0-100)
-  const weights = {
-    engagement_rate: 0.4, // 40%
-    saves: 0.25,          // 25%
-    comments: 0.20,       // 20%
-    reach: 0.15           // 15%
+  attempts?: number;
+  payload?: {
+    max_posts?: number;
+    [key: string]: any;
   };
-
-  let score = 0;
-
-  if (metrics.engagement_rate) {
-    // Normalizar: 5% engagement = 100 puntos
-    score +=
-      Math.min((metrics.engagement_rate / 5) * 100, 100) *
-      weights.engagement_rate;
-  }
-
-  if (metrics.saves) {
-    // Normalizar: 50 saves = 100 puntos
-    score += Math.min((metrics.saves / 50) * 100, 100) * weights.saves;
-  }
-
-  if (metrics.comments) {
-    // Normalizar: 20 comments = 100 puntos
-    score += Math.min((metrics.comments / 20) * 100, 100) * weights.comments;
-  }
-
-  if (metrics.reach) {
-    // Normalizar: 5000 reach = 100 puntos
-    score += Math.min((metrics.reach / 5000) * 100, 100) * weights.reach;
-  }
-
-  return Math.round(score);
 }
 
-async function updateProductPerformance(
-  productId: string,
-  metrics: PostMetrics
-) {
-  const perfScore = calculatePerformanceScore(metrics);
+type IgInsights = {
+  likes: number;
+  comments: number;
+  saves: number | null;
+  reach: number | null;
+  impressions: number | null;
+};
 
-  const { error } = await supabase
-    .from('product_performance')
-    .upsert(
-      {
-        product_id: productId,
-        perf_score: perfScore,
-        last_updated: new Date().toISOString()
-      },
-      {
-        onConflict: 'product_id'
-      }
-    );
+/**
+ * Calcula un perf_score sencillo a partir de las métricas.
+ */
+function computePerfScore(m: IgInsights): number {
+  const likes = m.likes || 0;
+  const comments = m.comments || 0;
+  const saves = m.saves || 0;
+  const reach = m.reach || 0;
 
-  if (error) {
-    console.error('❌ Error actualizando product_performance:', error);
-    throw error;
-  }
+  // MVP de scoring:
+  return Math.round(
+    likes * 2 +
+      comments * 3 +
+      saves * 4 +
+      reach * 0.01, // 100 reach ≈ +1 punto
+  );
 }
 
-export async function feedbackCollectJob(job: Job) {
+/**
+ * Wrapper alrededor de metaClient.getInstagramMediaInsights
+ * para normalizar el shape.
+ */
+async function fetchIgInsights(igMediaId: string): Promise<IgInsights> {
+  const raw = await metaClient.getInstagramMediaInsights(igMediaId);
+
+  return {
+    likes: raw.likes ?? 0,
+    comments: raw.comments ?? 0,
+    saves: raw.saves ?? null,
+    reach: raw.reach ?? null,
+    impressions: raw.impressions ?? null,
+  };
+}
+
+export async function feedbackCollectJob(job: JobLike): Promise<void> {
+  console.log('\n--- FEEDBACK COLLECT JOB START ---');
+  console.log(`Job ID: ${job.id}`);
+  console.log('Job payload:', job.payload ?? {});
+
+  const attempts = job.attempts ?? 0;
+  const maxPosts = job.payload?.max_posts ?? 20;
+
   try {
-    console.log('📊 Iniciando recolección de métricas...');
-
-    // Posts publicados en las últimas 48h
-    const cutoff = new Date();
-    cutoff.setHours(cutoff.getHours() - 48);
-
-    const { data, error } = await supabase
+    // 1) Buscar posts IG publicados con ig_media_id
+    const { data: posts, error } = await supabaseAdmin
       .from('generated_posts')
       .select(
         `
         id,
         product_id,
-        ig_media_id,
-        fb_post_id,
         channel,
-        visual_format,
+        ig_media_id,
         published_at
-      `
+      `,
       )
       .eq('status', 'PUBLISHED')
+      .eq('channel', 'IG')
       .not('ig_media_id', 'is', null)
-      .gte('published_at', cutoff.toISOString());
+      .order('published_at', { ascending: false })
+      .limit(maxPosts);
 
     if (error) throw error;
 
-    const posts = (data ?? []) as GeneratedPost[];
-
     if (!posts || posts.length === 0) {
-      console.log('ℹ️ No hay posts publicados recientes para procesar.');
-      await supabase
+      console.log(
+        '[FEEDBACK] No hay posts IG publicados pendientes de métricas. Nada que hacer.',
+      );
+
+      await supabaseAdmin
         .from('job_queue')
         .update({
           status: 'COMPLETED',
-          finished_at: new Date().toISOString()
+          completed_at: new Date().toISOString(),
         })
         .eq('id', job.id);
+
+      console.log('--- FEEDBACK COLLECT JOB END (EMPTY) ---\n');
       return;
     }
 
-    console.log(`📈 Procesando ${posts.length} posts...`);
+    console.log(`[FEEDBACK] Posts candidatos: ${posts.length}`);
 
     for (const post of posts) {
-      try {
-        if (!post.ig_media_id) {
-          console.warn('[FEEDBACK] Post sin ig_media_id, saltando', { postId: post.id });
-          continue;
-        }
+      const {
+        id: generatedPostId,
+        ig_media_id,
+        product_id,
+      } = post as {
+        id: string;
+        ig_media_id: string | null;
+        product_id: string;
+      };
 
-        const metrics: PostMetrics = {};
-
-        // 1) Métricas de Instagram
-        const igMetrics = await metaClient.getInstagramMediaInsights(
-          post.ig_media_id
+      if (!ig_media_id) {
+        console.warn(
+          `[FEEDBACK] Post ${generatedPostId} no tiene ig_media_id, saltando...`,
         );
-
-        if (igMetrics && typeof igMetrics === 'object') {
-          for (const [key, value] of Object.entries(igMetrics)) {
-            const typedKey = key as keyof PostMetrics;
-            if (value != null) {
-              metrics[typedKey] = value as any;
-            }
-          }
-        }
-
-        // 2) Métricas de Facebook (si existe fb_post_id)
-        if (post.fb_post_id) {
-          const fbMetrics = await metaClient.getFacebookPostInsights(
-            post.fb_post_id
-          );
-
-          if (fbMetrics && typeof fbMetrics === 'object') {
-            // Merge suave: si algo no existe aún, lo añadimos
-            for (const [key, value] of Object.entries(fbMetrics)) {
-              const typedKey = key as keyof PostMetrics;
-              if (value != null) {
-                if (
-                  typeof metrics[typedKey] === 'number' &&
-                  typeof value === 'number'
-                ) {
-                  // Si ya hay valor y también es número → promedio simple
-                  metrics[typedKey] = Math.round(
-                    ((metrics[typedKey] as number) + value) / 2
-                  );
-                } else {
-                  metrics[typedKey] = value as any;
-                }
-              }
-            }
-          }
-        }
-
-        // 3) Calcular engagement_rate si tenemos impresiones/reach
-        const impressions = metrics.impressions || metrics.reach || 0;
-
-        if (impressions > 0) {
-          const engagements =
-            (metrics.likes || 0) +
-            (metrics.comments || 0) * 2 +
-            (metrics.saves || 0) * 3 +
-            (metrics.shares || 0) * 2;
-
-          metrics.engagement_rate = (engagements / impressions) * 100;
-        } else {
-          metrics.engagement_rate = 0;
-        }
-
-        const perfScore = calculatePerformanceScore(metrics);
-
-        // 4) Actualizar post_feedback (caso OK) → UPDATE normal
-        const { error: pfError } = await supabase
-          .from('post_feedback')
-          .update({
-            metrics,
-            perf_score: perfScore,
-            collected_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .eq('generated_post_id', post.id);
-
-        if (pfError) {
-          console.error(
-            `❌ Error actualizando post_feedback para post ${post.id}:`,
-            pfError
-          );
-          // No hacemos throw para no romper todo el batch
-        }
-
-        // 5) Actualizar product_performance
-        await updateProductPerformance(post.product_id, metrics);
-
-        console.log(`✅ Métricas actualizadas para post ${post.id}`);
-      } catch (err) {
-        const axiosErr = err as AxiosError<any>;
-        const fbError = axiosErr?.response?.data?.error;
-
-        console.error('[FEEDBACK] Error procesando post', {
-          postId: post.id,
-          ig_media_id: post.ig_media_id,
-          fbError
-        });
-
-        // 🧷 Soft-fail: guardamos el error en post_feedback y no volvemos a intentarlo eternamente
-        const errorMetrics: any = {
-          error: fbError ?? {
-            message: 'INSIGHTS_UNSUPPORTED_OR_DELETED',
-            raw: axiosErr?.message ?? String(err)
-          }
-        };
-
-        const { error: pfError } = await supabase
-          .from('post_feedback')
-          .update({
-            metrics: errorMetrics,
-            perf_score: 0,
-            collected_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .eq('generated_post_id', post.id);
-
-        if (pfError) {
-          console.error(
-            `❌ Error actualizando post_feedback (error case) para post ${post.id}:`,
-            pfError
-          );
-        }
-
-        // seguimos con el siguiente post, sin hacer throw
+        continue;
       }
 
-      // Rate limiting muy suave para Meta
-      await sleep(1000);
+      // 1.1 Comprobar si ya recolectamos métricas antes (collection_count > 0)
+      const { data: existingFeedback, error: fbError } = await supabaseAdmin
+        .from('post_feedback')
+        .select('id, collection_count')
+        .eq('post_id', generatedPostId)
+        .maybeSingle();
+
+      if (fbError && fbError.code !== 'PGRST116') {
+        // PGRST116 = "No rows found", la ignoramos
+        console.warn(
+          `[FEEDBACK] Error leyendo post_feedback para ${generatedPostId}:`,
+          fbError.message || fbError,
+        );
+      }
+
+      const alreadyCollected =
+        existingFeedback && (existingFeedback as any).collection_count > 0;
+
+      if (alreadyCollected) {
+        console.log(
+          `[FEEDBACK] Post ${generatedPostId} ya tiene métricas (collection_count > 0), saltando...`,
+        );
+        continue;
+      }
+
+      try {
+        console.log(
+          `[FEEDBACK] Recuperando insights para IG media ${ig_media_id}...`,
+        );
+        const insights = await fetchIgInsights(ig_media_id);
+        const perfScore = computePerfScore(insights);
+
+        // 2) Upsert en post_feedback usando post_id (tu esquema real)
+        const { error: pfError } = await supabaseAdmin
+          .from('post_feedback')
+          .upsert(
+            {
+              post_id: generatedPostId,
+              metrics: insights as any,
+              perf_score: perfScore,
+              collection_count: 1, // marcamos que ya hemos recolectado
+            },
+            {
+              onConflict: 'post_id',
+            },
+          );
+
+        if (pfError) throw pfError;
+
+        // 3) Actualizar product_performance (MVP: acumulativo)
+        const { data: existingPerf, error: existingPerfError } =
+          await supabaseAdmin
+            .from('product_performance')
+            .select('metrics, perf_score')
+            .eq('product_id', product_id)
+            .maybeSingle();
+
+        if (existingPerfError && existingPerfError.code !== 'PGRST116') {
+          throw existingPerfError;
+        }
+
+        const prevMetrics = (existingPerf?.metrics as any) || {};
+        const prevScore = existingPerf?.perf_score ?? 0;
+
+        const newMetrics = {
+          total_likes: (prevMetrics.total_likes ?? 0) + insights.likes,
+          total_comments:
+            (prevMetrics.total_comments ?? 0) + insights.comments,
+          total_saves: (prevMetrics.total_saves ?? 0) + (insights.saves ?? 0),
+          total_reach: (prevMetrics.total_reach ?? 0) + (insights.reach ?? 0),
+          total_posts: (prevMetrics.total_posts ?? 0) + 1,
+        };
+
+        const newPerfScore = prevScore + perfScore;
+
+        const { error: upsertPerfError } = await supabaseAdmin
+          .from('product_performance')
+          .upsert(
+            {
+              product_id,
+              metrics: newMetrics,
+              perf_score: newPerfScore,
+            },
+            { onConflict: 'product_id' },
+          );
+
+        if (upsertPerfError) throw upsertPerfError;
+
+        console.log(
+          `[FEEDBACK] OK post ${generatedPostId} → perf_score=${perfScore}`,
+        );
+      } catch (err: any) {
+        console.error(
+          `[FEEDBACK] Error procesando post ${generatedPostId}:`,
+          err?.message || String(err),
+        );
+
+        // Guardamos el error en post_feedback para poder verlo luego
+        await supabaseAdmin
+          .from('post_feedback')
+          .upsert(
+            {
+              post_id: generatedPostId,
+              metrics: {
+                error: err?.message || String(err),
+              } as any,
+            },
+            { onConflict: 'post_id' },
+          );
+      }
     }
 
-    // Job completado
-    await supabase
+    await supabaseAdmin
       .from('job_queue')
       .update({
         status: 'COMPLETED',
-        finished_at: new Date().toISOString()
+        completed_at: new Date().toISOString(),
       })
       .eq('id', job.id);
 
-    console.log('🎉 Recolección de métricas completada');
-  } catch (error: any) {
-    console.error('❌ Error en feedbackCollectJob:', error);
+    console.log('--- FEEDBACK COLLECT JOB END ---\n');
+  } catch (err: any) {
+    console.error('❌ Error en feedbackCollectJob:', err);
 
-    await supabase
+    await supabaseAdmin
       .from('job_queue')
       .update({
         status: 'FAILED',
-        error: error?.message ?? String(error),
-        attempts: job.attempts + 1,
-        finished_at: new Date().toISOString()
+        error_message: err?.message || String(err),
+        attempts: attempts + 1,
+        completed_at: new Date().toISOString(),
       })
       .eq('id', job.id);
 
-    throw error;
+    throw err;
   }
 }
