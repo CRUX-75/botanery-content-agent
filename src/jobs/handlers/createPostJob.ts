@@ -23,23 +23,72 @@ const IMAGE_BUCKET = 'botanery-assets';
 const MAX_CAROUSEL_SLIDES = 4;
 
 /**
- * Versión mínima para tener HOY un carrusel funcional de 4 slides.
- * Ignoramos categoría/producto y vamos directos a donde SÍ hay imágenes:
+ * Resuelve las carpetas del bucket donde buscar imágenes según el producto.
+ *
+ * Estructura actual del bucket:
  *
  * botanery-assets/
- *   orchids/
- *     orchids/   ← aquí están las imágenes reales (1.jpg, 2.jpg, ...)
+ *   products/
+ *     orchids/
  *     sukkulenten/
  *     colomi_granulat/
+ *     ziertoepfe/
  */
-function getBucketPrefixesForProduct(_product: ProductLike): string[] {
+function getBucketPrefixesForProduct(product: ProductLike): string[] {
   const prefixes: string[] = [];
 
-  // Carpeta real donde sabemos que hay imágenes ahora mismo
-  prefixes.push('products/orchids');
+  // Normalizamos texto para buscar palabras clave
+  const name = (product as any).product_name?.toLowerCase?.() ?? '';
+  const rawCategory =
+    ((product as any).product_category ||
+      (product as any).category ||
+      (product as any).product_type ||
+      '') as string;
+  const category = rawCategory.toLowerCase();
 
-  // Fallback por si en el futuro mueves cosas a la raíz
-  prefixes.push('orchids');
+  const text = `${name} ${category}`;
+
+  // 🪴 ORCHIDS
+  if (
+    text.includes('orchid') ||
+    text.includes('orchidee') ||
+    text.includes('phalaenopsis')
+  ) {
+    prefixes.push('products/orchids');
+  }
+
+  // 🌵 SUKKULENTEN
+  if (text.includes('sukkul')) {
+    prefixes.push('products/sukkulenten');
+  }
+
+  // 🪨 COLOMI / GRANULAT / SUBSTRAT
+  if (
+    text.includes('granulat') ||
+    text.includes('substrat') ||
+    text.includes('colomi')
+  ) {
+    prefixes.push('products/colomi_granulat');
+  }
+
+  // 🏺 ZIERTÖPFE
+  if (
+    text.includes('ziertopf') ||
+    text.includes('ziertoepf') || // por si acaso
+    text.includes('topf') ||
+    text.includes('töpfe') ||
+    text.includes('toepfe') ||
+    text.includes('gummy') ||
+    text.includes('travertine')
+  ) {
+    prefixes.push('products/ziertoepfe');
+  }
+
+  // 🛟 Fallback: mientras solo haya imágenes en orchids,
+  // usamos esa carpeta si nada matchea.
+  if (prefixes.length === 0) {
+    prefixes.push('products/orchids');
+  }
 
   return Array.from(new Set(prefixes));
 }
@@ -51,9 +100,8 @@ function isImageFile(name: string): boolean {
 /**
  * Devuelve hasta `maxSlides` URLs públicas de imágenes desde el bucket
  * siguiendo esta lógica:
- *  1) Probar "orchids/orchids"
- *  2) Luego "orchids"
- *  3) Si no hay resultados, devuelve []
+ *  1) Probar los prefijos devueltos por getBucketPrefixesForProduct
+ *  2) Si no hay resultados válidos, devuelve []
  */
 async function getCarouselImagesFromBucket(
   product: ProductLike,
@@ -137,6 +185,7 @@ export async function createPostJob(job: any) {
     const payload: CreatePostPayload = job?.payload ?? {};
     const requestedFormat = payload.format;
     const requestedChannel = payload.target_channel;
+    // ... (a partir de aquí sigue igual que ya lo tienes)
 
     // 1) Seleccionar producto
     const product = await selectProduct();
