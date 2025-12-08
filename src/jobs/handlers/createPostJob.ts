@@ -36,7 +36,7 @@ function getBucketPrefixesForProduct(_product: ProductLike): string[] {
   const prefixes: string[] = [];
 
   // Carpeta real donde sabemos que hay imágenes ahora mismo
-  prefixes.push('orchids/orchids');
+  prefixes.push('products/orchids');
 
   // Fallback por si en el futuro mueves cosas a la raíz
   prefixes.push('orchids');
