@@ -217,7 +217,7 @@ export async function createPostJob(job: any) {
       templateVersion = 'v1_basic';
     }
 
-    // 3.1) Intentar obtener imágenes reales desde el bucket
+     // 3.1) Intentar obtener imágenes reales desde el bucket
     let bucketImages: string[] = [];
     try {
       bucketImages = await getCarouselImagesFromBucket(
@@ -236,16 +236,24 @@ export async function createPostJob(job: any) {
       bucketImages,
     });
 
-    // 3.2) Modo bestia: SIEMPRE queremos carrusel (máx. 4 slides)
-    const wantsCarousel = true;
+    // 3.2) Decisión inteligente:
+    // - Si hay >= 2 imágenes (bucket o advanced) → CARRUSEL
+    // - Si no → SINGLE POST
+    const advancedImages = Array.isArray(visualAssets.carouselImages)
+      ? visualAssets.carouselImages
+      : [];
+
+    const hasBucketCarousel = bucketImages.length >= 2;
+    const hasAdvancedCarousel = advancedImages.length >= 2;
+    const hasAnyCarouselSource = hasBucketCarousel || hasAdvancedCarousel;
 
     let carouselImages: string[] | null = null;
-    let format: 'IG_SINGLE' | 'IG_CAROUSEL' = 'IG_CAROUSEL';
-    let slideCount = 4;
+    let format: 'IG_SINGLE' | 'IG_CAROUSEL';
+    let slideCount: number;
 
-    if (wantsCarousel) {
-      // PRIORIDAD 1 → Bucket (imágenes reales de producto/familia)
-      if (Array.isArray(bucketImages) && bucketImages.length >= 2) {
+    if (hasAnyCarouselSource) {
+      // PRIORIDAD 1 → Bucket
+      if (hasBucketCarousel) {
         carouselImages = bucketImages.slice(0, MAX_CAROUSEL_SLIDES);
         format = 'IG_CAROUSEL';
         slideCount = carouselImages.length;
@@ -253,46 +261,37 @@ export async function createPostJob(job: any) {
         console.log(
           `[CREATE_POST] Usando ${slideCount} imágenes del bucket para el carrusel.`,
         );
-      }
-      // PRIORIDAD 2 → Pipeline avanzado (si trajo varias imágenes)
-      else if (
-        Array.isArray(visualAssets.carouselImages) &&
-        visualAssets.carouselImages.length >= 2
-      ) {
-        carouselImages = visualAssets.carouselImages.slice(
-          0,
-          MAX_CAROUSEL_SLIDES,
-        );
+      } else {
+        // PRIORIDAD 2 → Imágenes del pipeline avanzado
+        carouselImages = advancedImages.slice(0, MAX_CAROUSEL_SLIDES);
         format = 'IG_CAROUSEL';
         slideCount = carouselImages.length;
+        visualFormat = `carousel_${slideCount}_advanced`;
         console.log(
-          `[CREATE_POST] Usando ${slideCount} imágenes del pipeline avanzado.`,
+          `[CREATE_POST] Usando ${slideCount} imágenes del pipeline avanzado para el carrusel.`,
         );
-      }
-      // PRIORIDAD 3 → Fallback: duplicar mainImage 4 veces
-      else {
-        console.log(
-          '[CREATE_POST] Fallback carrusel: duplicando mainImage 4 veces.',
-        );
-        carouselImages = Array(MAX_CAROUSEL_SLIDES).fill(visualAssets.mainImage);
-        format = 'IG_CAROUSEL';
-        slideCount = MAX_CAROUSEL_SLIDES;
-        if (visualFormat === 'single_legacy') {
-          visualFormat = `carousel_${MAX_CAROUSEL_SLIDES}`;
-        }
       }
     } else {
-      // (no se usará, pero lo dejamos por claridad)
+      // ❗ No hay material suficiente → publicamos SINGLE
       format = 'IG_SINGLE';
       slideCount = 1;
       carouselImages = null;
+
+      if (!visualFormat.startsWith('single')) {
+        visualFormat = 'single';
+      }
+
+      console.log(
+        '[CREATE_POST] No hay suficientes imágenes para carrusel. Publicaremos SINGLE POST.',
+      );
     }
 
     console.log('[CREATE_POST] Visual decision', {
       requestedFormat,
-      wantsCarousel,
       format,
       slideCount,
+      hasBucketCarousel,
+      hasAdvancedCarousel,
       carouselImagesLength: carouselImages?.length ?? 0,
     });
 
