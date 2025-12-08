@@ -23,52 +23,24 @@ const IMAGE_BUCKET = 'botanery-assets';
 const MAX_CAROUSEL_SLIDES = 4;
 
 /**
- * Determina posibles prefijos de carpeta en el bucket según el producto.
- * La idea es soportar:
- *  - Carpetas por producto (p.ej.: "orchids/sku-1234")
- *  - Carpetas por familia: "orchids", "sukkulenten", "colomi_granulat"
+ * Versión mínima para tener HOY un carrusel funcional de 4 slides.
+ * Ignoramos categoría/producto y vamos directos a donde SÍ hay imágenes:
+ *
+ * botanery-assets/
+ *   orchids/
+ *     orchids/   ← aquí están las imágenes reales (1.jpg, 2.jpg, ...)
+ *     sukkulenten/
+ *     colomi_granulat/
  */
-function getBucketPrefixesForProduct(product: ProductLike): string[] {
+function getBucketPrefixesForProduct(_product: ProductLike): string[] {
   const prefixes: string[] = [];
-  const p: any = product;
 
-  // Si en el futuro añades un campo dedicado, lo usamos primero
-  if (p.image_folder && typeof p.image_folder === 'string') {
-    prefixes.push(p.image_folder);
-  }
+  // Carpeta real donde sabemos que hay imágenes ahora mismo
+  prefixes.push('orchids/orchids');
 
-  // Intento con handle / slug si existe
-  if (p.handle && typeof p.handle === 'string') {
-    // Ejemplo: orchids/<handle>
-    prefixes.push(`orchids/${p.handle}`);
-    prefixes.push(`sukkulenten/${p.handle}`);
-    prefixes.push(`colomi_granulat/${p.handle}`);
-  }
+  // Fallback por si en el futuro mueves cosas a la raíz
+  prefixes.push('orchids');
 
-  // Mapear por categoría
-  const rawCategory =
-    (p.product_category ||
-      p.category ||
-      p.product_type ||
-      '') as string;
-  const category = rawCategory.toLowerCase();
-
-  if (category.includes('orchid') || category.includes('orchidee')) {
-    prefixes.push('orchids');
-  }
-  if (category.includes('sukkul')) {
-    prefixes.push('sukkulenten');
-  }
-  if (category.includes('granulat') || category.includes('substrat') || category.includes('colomi')) {
-    prefixes.push('colomi_granulat');
-  }
-
-  // Fallback muy seguro: familia principal
-  if (prefixes.length === 0) {
-    prefixes.push('orchids');
-  }
-
-  // Quitar duplicados
   return Array.from(new Set(prefixes));
 }
 
@@ -79,8 +51,8 @@ function isImageFile(name: string): boolean {
 /**
  * Devuelve hasta `maxSlides` URLs públicas de imágenes desde el bucket
  * siguiendo esta lógica:
- *  1) Probar carpetas más específicas (producto)
- *  2) Luego carpetas de familia (orchids / sukkulenten / colomi_granulat)
+ *  1) Probar "orchids/orchids"
+ *  2) Luego "orchids"
  *  3) Si no hay resultados, devuelve []
  */
 async function getCarouselImagesFromBucket(
@@ -217,7 +189,7 @@ export async function createPostJob(job: any) {
       templateVersion = 'v1_basic';
     }
 
-     // 3.1) Intentar obtener imágenes reales desde el bucket
+    // 3.1) Intentar obtener imágenes reales desde el bucket
     let bucketImages: string[] = [];
     try {
       bucketImages = await getCarouselImagesFromBucket(
@@ -237,14 +209,14 @@ export async function createPostJob(job: any) {
     });
 
     // 3.2) Decisión inteligente:
-    // - Si hay >= 2 imágenes (bucket o advanced) → CARRUSEL
+    // - Si hay >= 4 imágenes (bucket o advanced) → CARRUSEL
     // - Si no → SINGLE POST
     const advancedImages = Array.isArray(visualAssets.carouselImages)
       ? visualAssets.carouselImages
       : [];
 
-    const hasBucketCarousel = bucketImages.length >= 2;
-    const hasAdvancedCarousel = advancedImages.length >= 2;
+    const hasBucketCarousel = bucketImages.length >= MAX_CAROUSEL_SLIDES;
+    const hasAdvancedCarousel = advancedImages.length >= MAX_CAROUSEL_SLIDES;
     const hasAnyCarouselSource = hasBucketCarousel || hasAdvancedCarousel;
 
     let carouselImages: string[] | null = null;
@@ -300,7 +272,6 @@ export async function createPostJob(job: any) {
 
     // 5) Canal objetivo – forzado a IG_ONLY
     const rawChannel = requestedChannel ?? 'IG_ONLY';
-
     const channelTarget: 'IG_FB' | 'IG_ONLY' | 'FB_ONLY' = 'IG_ONLY';
 
     console.log('[CREATE_POST] Channel target decision', {
@@ -320,7 +291,7 @@ export async function createPostJob(job: any) {
         carousel_images: carouselImages,
         visual_format: visualFormat,
         template_version: templateVersion,
-        format, // IG_CAROUSEL
+        format, // IG_SINGLE o IG_CAROUSEL
         slide_count: slideCount,
         status: 'DRAFT',
         style: postContent.style,
