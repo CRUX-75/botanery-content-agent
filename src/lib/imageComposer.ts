@@ -20,7 +20,7 @@ export async function composeImageForPost(post: any): Promise<string> {
     const response = await axios.get(sourceUrl, { responseType: 'arraybuffer' });
     const baseImage = Buffer.from(response.data);
 
-    // 2️⃣ Redimensionar imagen a máximo 960x960
+    // 2️⃣ Redimensionar imagen a máximo 960x960 (manteniendo proporción)
     const resizedProduct = await sharp(baseImage)
       .resize(960, 960, {
         fit: 'inside',
@@ -29,7 +29,7 @@ export async function composeImageForPost(post: any): Promise<string> {
       .png()
       .toBuffer();
 
-    // 2️⃣.b Crear sombra (blur + opacidad reducida)
+    // 2️⃣.b Crear sombra suave (blur + oscurecer) a partir del producto
     const blurredShadow = await sharp(resizedProduct)
       .removeAlpha()
       .resize(960, 960, { fit: 'inside' })
@@ -38,7 +38,7 @@ export async function composeImageForPost(post: any): Promise<string> {
       .png()
       .toBuffer();
 
-    // 3️⃣ Buscar logo local
+    // 3️⃣ Buscar logo local (mantengo tus rutas)
     const logoCandidates = [
       path.resolve(process.cwd(), 'public/logo.png'),
       path.resolve(process.cwd(), 'app/public/logo.png'),
@@ -56,33 +56,59 @@ export async function composeImageForPost(post: any): Promise<string> {
     if (logoPath) {
       log('[SHARP] Logo encontrado, se usará en la composición', { logoPath });
     } else {
-      log('[SHARP] Logo NO encontrado en ninguna ruta, se compone solo con producto', { logoCandidates });
+      log('[SHARP] Logo NO encontrado en ninguna ruta, se compone solo con producto', {
+        logoCandidates,
+      });
     }
 
-    // 4️⃣ Posiciones
-    const productLeft = Math.floor((1080 - 960) / 2); // 60
-    const productTop = Math.floor((1080 - 960) / 2);  // 60
+    // 4️⃣ Posiciones en lienzo 1080x1080
+    const canvasWidth = 1080;
+    const canvasHeight = 1080;
+    const productMaxSize = 960;
 
-    const overlays: sharp.OverlayOptions[] = [
-      {
-        input: resizedProduct,
-        left: productLeft,
-        top: productTop,
-      },
-    ];
+    const productLeft = Math.floor((canvasWidth - productMaxSize) / 2); // 60
+    const productTop = Math.floor((canvasHeight - productMaxSize) / 2); // 60
 
+    const overlays: sharp.OverlayOptions[] = [];
+
+    // 4.a Primero la sombra (ligeramente desplazada hacia abajo)
+    overlays.push({
+      input: blurredShadow,
+      left: productLeft,
+      top: productTop + 40, // un poco más abajo para que parezca sombra real
+    });
+
+    // 4.b Luego el producto encima
+    overlays.push({
+      input: resizedProduct,
+      left: productLeft,
+      top: productTop,
+    });
+
+    // 4.c Logo opcional en esquina inferior derecha (como antes)
     if (logoPath) {
+      const logoBuffer = await sharp(logoPath)
+        .resize(220, 220, {
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .png()
+        .toBuffer();
+
       overlays.push({
-        input: logoPath,
-        gravity: 'southeast',
+        input: logoBuffer,
+        gravity: 'southeast', // mantiene el comportamiento original
+        // si quisieras afinar margen:
+        // left / top pueden combinarse con gravity usando Sharp >=0.32,
+        // pero lo dejamos simple por estabilidad.
       });
     }
 
     // 5️⃣ Crear lienzo con fondo pastel (#F7EFE4)
     const composed = await sharp({
       create: {
-        width: 1080,
-        height: 1080,
+        width: canvasWidth,
+        height: canvasHeight,
         channels: 3,
         background: '#F7EFE4',
       },

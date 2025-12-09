@@ -201,14 +201,28 @@ export async function generateTemplateSlide(opts: {
       : '';
 
   // 👇 Aquí unificamos el logo en una sola línea para que no se vea "botanery" arriba y ".de" abajo
-  const brandBlock =
+    const brandBlock =
     variant === 'cta'
       ? `
-        <text x="50%" y="${height - 80}" class="brand-strong">botanery.de</text>
+        <!-- Píldora verde con "botanery.de" centrado -->
+        <g>
+          <rect
+            x="${width / 2 - 170}"
+            y="${height - 130}"
+            width="340"
+            height="56"
+            rx="28"
+            fill="#4F6354"
+            opacity="0.98"
+          />
+          <text x="50%" y="${height - 92}" class="brand-cta">botanery.de</text>
+        </g>
       `
       : `
+        <!-- Marca discreta para slides de beneficio -->
         <text x="50%" y="${height - 60}" class="brand-light">botanery.de</text>
       `;
+
 
   // Solo embebemos la fuente si realmente la cargamos
   const fontFaceBlock = embeddedFontBase64
@@ -255,6 +269,13 @@ export async function generateTemplateSlide(opts: {
           font-family: ${fontFamily};
           font-size: 24px;
           fill: #6B7280;
+          text-anchor: middle;
+        }
+          .brand-cta {
+          font-family: ${fontFamily};
+          font-size: 26px;
+          font-weight: 500;
+          fill: #F9FAFB;
           text-anchor: middle;
         }
       </style>
