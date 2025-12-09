@@ -179,7 +179,6 @@ try {
 // ---------------------------------------------
 // 🧩 Helper gráfico para slides de texto (Botanery)
 // ---------------------------------------------
-
 export async function generateTemplateSlide(opts: {
   title: string;
   subtitle?: string;
@@ -201,27 +200,17 @@ export async function generateTemplateSlide(opts: {
       ? `<rect x="0" y="${height - 180}" width="${width}" height="180" fill="#F0EADF" opacity="0.95"/>`
       : '';
 
+  // 👇 Aquí unificamos el logo en una sola línea para que no se vea "botanery" arriba y ".de" abajo
   const brandBlock =
     variant === 'cta'
       ? `
-        <!-- CTA fuerte: píldora con botanery.de -->
-        <g class="brand-cta">
-          <rect
-            x="${width / 2 - 190}"
-            y="${height - 145}"
-            width="380"
-            height="70"
-            rx="35"
-            class="brand-pill"
-          />
-          <text x="50%" y="${height - 100}" class="brand-cta-text">botanery.de</text>
-        </g>
+        <text x="50%" y="${height - 80}" class="brand-strong">botanery.de</text>
       `
       : `
-        <!-- Marca discreta para slides de beneficio -->
         <text x="50%" y="${height - 60}" class="brand-light">botanery.de</text>
       `;
 
+  // Solo embebemos la fuente si realmente la cargamos
   const fontFaceBlock = embeddedFontBase64
     ? `
       @font-face {
@@ -255,21 +244,17 @@ export async function generateTemplateSlide(opts: {
           fill: ${subtitleColor};
           text-anchor: middle;
         }
+        .brand-strong {
+          font-family: ${fontFamily};
+          font-size: 30px;
+          font-weight: 600;
+          fill: #4F6354;
+          text-anchor: middle;
+        }
         .brand-light {
           font-family: ${fontFamily};
           font-size: 24px;
           fill: #6B7280;
-          text-anchor: middle;
-        }
-        .brand-pill {
-          fill: #4F6354;
-          opacity: 0.98;
-        }
-        .brand-cta-text {
-          font-family: ${fontFamily};
-          font-size: 28px;
-          font-weight: 500;
-          fill: #FDFBF7;
           text-anchor: middle;
         }
       </style>
@@ -277,7 +262,7 @@ export async function generateTemplateSlide(opts: {
       <!-- Fondo crema con ligero degradado -->
       <rect width="100%" height="100%" fill="url(#bg)"/>
 
-      <!-- Franja superior sutil -->
+      <!-- Franja superior muy sutil -->
       <rect x="0" y="0" width="100%" height="38" fill="#4F6354" opacity="0.08"/>
 
       ${ctaBand}
