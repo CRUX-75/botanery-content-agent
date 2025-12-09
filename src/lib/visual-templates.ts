@@ -187,11 +187,6 @@ export async function generateTemplateSlide(opts: {
 }): Promise<Buffer> {
   const width = 1080;
   const height = 1080;
-
-  // 🔒 Valores seguros (evita textos vacíos que luego salen como "□")
-  const titleText = (opts.title || '').trim() || 'Botanery';
-  const subtitleText = (opts.subtitle || '').trim();
-
   const variant = opts.variant ?? 'benefit';
 
   const fontFamily = embeddedFontBase64
@@ -209,9 +204,18 @@ export async function generateTemplateSlide(opts: {
   const brandBlock =
     variant === 'cta'
       ? `
-        <!-- "Logo" tipográfico para CTA -->
-        <text x="50%" y="${height - 110}" class="brand-strong">botanery</text>
-        <text x="50%" y="${height - 75}" class="brand-light">.de</text>
+        <!-- CTA fuerte: píldora con botanery.de -->
+        <g class="brand-cta">
+          <rect
+            x="${width / 2 - 190}"
+            y="${height - 145}"
+            width="380"
+            height="70"
+            rx="35"
+            class="brand-pill"
+          />
+          <text x="50%" y="${height - 100}" class="brand-cta-text">botanery.de</text>
+        </g>
       `
       : `
         <!-- Marca discreta para slides de beneficio -->
@@ -241,7 +245,7 @@ export async function generateTemplateSlide(opts: {
 
         .title {
           font-family: ${fontFamily};
-          font-size: 76px;
+          font-size: 72px;
           fill: ${titleColor};
           text-anchor: middle;
         }
@@ -251,17 +255,21 @@ export async function generateTemplateSlide(opts: {
           fill: ${subtitleColor};
           text-anchor: middle;
         }
-        .brand-strong {
-          font-family: ${fontFamily};
-          font-size: 34px;
-          font-weight: 600;
-          fill: #4F6354;
-          text-anchor: middle;
-        }
         .brand-light {
           font-family: ${fontFamily};
           font-size: 24px;
           fill: #6B7280;
+          text-anchor: middle;
+        }
+        .brand-pill {
+          fill: #4F6354;
+          opacity: 0.98;
+        }
+        .brand-cta-text {
+          font-family: ${fontFamily};
+          font-size: 28px;
+          font-weight: 500;
+          fill: #FDFBF7;
           text-anchor: middle;
         }
       </style>
@@ -269,13 +277,13 @@ export async function generateTemplateSlide(opts: {
       <!-- Fondo crema con ligero degradado -->
       <rect width="100%" height="100%" fill="url(#bg)"/>
 
-      <!-- Franja superior muy sutil -->
+      <!-- Franja superior sutil -->
       <rect x="0" y="0" width="100%" height="38" fill="#4F6354" opacity="0.08"/>
 
       ${ctaBand}
 
-      <text x="50%" y="42%" class="title">${titleText}</text>
-      <text x="50%" y="60%" class="subtitle">${subtitleText}</text>
+      <text x="50%" y="42%" class="title">${opts.title}</text>
+      <text x="50%" y="60%" class="subtitle">${opts.subtitle || ''}</text>
 
       ${brandBlock}
     </svg>

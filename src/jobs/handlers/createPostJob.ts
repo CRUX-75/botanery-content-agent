@@ -179,12 +179,12 @@ async function getCarouselImagesFromBucket(
 }
 
 /**
- * 🧩 CARRUSEL 4 SLIDES — MVP
+ * 🧩 CARRUSEL 4 SLIDES — MVP BOTANERY (blindado)
  *
  * Slide 1 → Imagen principal del producto
  * Slide 2 → Zoom / detalle (o misma que la 1 si no hay)
- * Slide 3 → Beneficio clave (template gráfico Botanery)
- * Slide 4 → CTA (template gráfico Botanery + “logo” tipográfico)
+ * Slide 3 → Beneficio clave (template gráfico)
+ * Slide 4 → CTA (template gráfico con logo tipográfico)
  */
 async function buildCarousel4(
   product: ProductLike,
@@ -192,23 +192,37 @@ async function buildCarousel4(
 ): Promise<string[]> {
   const slides: string[] = [];
 
+  // 🔒 Imagen principal SIEMPRE definida
   const primary =
     (product as any).image_primary_url ||
     (product as any).image_url ||
     mainImageUrl;
 
-  const secondary =
+  if (!primary) {
+    console.warn(
+      '[buildCarousel4] Producto sin imagen principal. Usando sólo mainImageUrl.',
+      { productId: (product as any).id },
+    );
+    return [mainImageUrl];
+  }
+
+  // Intentamos sacar una segunda imagen "distinta" (detalle / zoom)
+  const secondaryRaw =
     (product as any).image_secondary_url ||
     (product as any).image_detail_url ||
-    primary;
+    '';
+
+  const secondary = secondaryRaw && secondaryRaw.trim().length > 0
+    ? secondaryRaw
+    : primary;
 
   // Slide 1 → imagen principal
   slides.push(primary);
 
-  // Slide 2 → detalle / secondary (si no hay, repite la principal de forma segura)
-  slides.push(secondary);
+  // Slide 2 → detalle (si no hay, repetimos la principal para mantener el formato)
+  slides.push(secondary !== primary ? secondary : primary);
 
-  // Slide 3 → template gráfica con beneficio clave
+  // Slide 3 → template gráfico con beneficios
   const slide3Buffer = await generateTemplateSlide({
     title: 'Warum Orchideen?',
     subtitle: 'Pflegeleicht, langlebig und ideal für jedes Zuhause.',
@@ -216,19 +230,19 @@ async function buildCarousel4(
   });
   const slide3Url = await uploadToSupabase(
     slide3Buffer,
-    `carousel/benefit-${product.id}.png`,
+    `carousel/benefit-${(product as any).id}.png`,
   );
   slides.push(slide3Url);
 
-  // Slide 4 → CTA con branding Botanery
+  // Slide 4 → CTA con marca fuerte
   const slide4Buffer = await generateTemplateSlide({
     title: 'Entdecke mehr',
-    subtitle: 'Deine Lieblingspflanzen auf botanery.de',
+    subtitle: 'botanery.de',
     variant: 'cta',
   });
   const slide4Url = await uploadToSupabase(
     slide4Buffer,
-    `carousel/cta-${product.id}.png`,
+    `carousel/cta-${(product as any).id}.png`,
   );
   slides.push(slide4Url);
 
