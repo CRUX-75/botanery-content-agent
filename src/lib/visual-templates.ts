@@ -1,6 +1,8 @@
 // src/lib/visual-templates.ts
 
 import sharp from 'sharp';
+import fs from 'fs';
+import path from 'path';
 
 // ---------------------------------------------
 // Interfaces necesarias para evitar errores TS
@@ -154,16 +156,29 @@ export function getTemplateForProduct(product: Product): VisualTemplate {
 }
 
 // ---------------------------------------------
-// 🧩 Helper gráfico para slides de texto (Botanery)
-//  → SIN fuentes externas, solo sans-serif del sistema
-//  → Limpiamos caracteres no ASCII para evitar cuadrados
+// Fuente Inter embebida desde /lib/fonts/Inter-Regular.ttf
 // ---------------------------------------------
 
-function sanitizeText(input: string | undefined): string {
-  if (!input) return '';
-  // Eliminamos caracteres no-ASCII (umlauts, etc.) para evitar tofu en algunos sistemas
-  return input.replace(/[^\x20-\x7E]/g, '');
+let embeddedFontBase64: string | null = null;
+
+try {
+  // IMPORTANTE:
+  //  - En desarrollo:  src/lib/fonts/Inter-Regular.ttf
+  //  - En runtime:     dist/lib/fonts/Inter-Regular.ttf
+  const fontPath = path.join(__dirname, 'fonts', 'Inter-Regular.ttf');
+  const fontBuffer = fs.readFileSync(fontPath);
+  embeddedFontBase64 = fontBuffer.toString('base64');
+  console.log('[TEMPLATES] Inter-Regular.ttf cargada correctamente:', fontPath);
+} catch (err) {
+  console.warn(
+    '[TEMPLATES] No se pudo cargar Inter-Regular.ttf. Se usará sans-serif del sistema.',
+  );
+  embeddedFontBase64 = null;
 }
+
+// ---------------------------------------------
+// 🧩 Helper gráfico para slides de texto (Botanery)
+// ---------------------------------------------
 
 export async function generateTemplateSlide(opts: {
   title: string;
@@ -172,9 +187,14 @@ export async function generateTemplateSlide(opts: {
   const width = 1080;
   const height = 1080;
 
-  const safeTitle = sanitizeText(opts.title);
-  const safeSubtitle = sanitizeText(opts.subtitle || '');
-  const brand = 'botanery.de';
+  const fontFaceBlock = embeddedFontBase64
+    ? `
+      @font-face {
+        font-family: 'InterEmbed';
+        src: url("data:font/ttf;base64,${embeddedFontBase64}") format("truetype");
+      }
+    `
+    : '';
 
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
@@ -186,20 +206,22 @@ export async function generateTemplateSlide(opts: {
       </defs>
 
       <style>
+        ${fontFaceBlock}
+
         .title {
-          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-family: ${embeddedFontBase64 ? 'InterEmbed' : 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'};
           font-size: 72px;
           fill: #1F2933;
           text-anchor: middle;
         }
         .subtitle {
-          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-family: ${embeddedFontBase64 ? 'InterEmbed' : 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'};
           font-size: 40px;
           fill: #4B5563;
           text-anchor: middle;
         }
         .brand {
-          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-family: ${embeddedFontBase64 ? 'InterEmbed' : 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'};
           font-size: 28px;
           fill: #4F6354;
           text-anchor: middle;
@@ -212,13 +234,13 @@ export async function generateTemplateSlide(opts: {
       <!-- Franja superior sutil en verde Botanery -->
       <rect x="0" y="0" width="100%" height="40" fill="#4F6354" opacity="0.10"/>
 
-      <text x="50%" y="42%" class="title">${safeTitle}</text>
+      <text x="50%" y="42%" class="title">${opts.title}</text>
 
       <text x="50%" y="60%" class="subtitle">
-        ${safeSubtitle}
+        ${opts.subtitle || ''}
       </text>
 
-      <text x="50%" y="92%" class="brand">${brand}</text>
+      <text x="50%" y="92%" class="brand">botanery.de</text>
     </svg>
   `;
 
