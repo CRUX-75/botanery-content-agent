@@ -259,7 +259,10 @@ export async function generateTemplateSlide(opts: {
         }
       </style>
 
+      <!-- Fondo crema con ligero degradado -->
       <rect width="100%" height="100%" fill="url(#bg)"/>
+
+      <!-- Franja superior muy sutil -->
       <rect x="0" y="0" width="100%" height="38" fill="#4F6354" opacity="0.08"/>
 
       ${ctaBand}
