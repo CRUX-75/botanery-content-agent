@@ -155,7 +155,15 @@ export function getTemplateForProduct(product: Product): VisualTemplate {
 
 // ---------------------------------------------
 // 🧩 Helper gráfico para slides de texto (Botanery)
+//  → SIN fuentes externas, solo sans-serif del sistema
+//  → Limpiamos caracteres no ASCII para evitar cuadrados
 // ---------------------------------------------
+
+function sanitizeText(input: string | undefined): string {
+  if (!input) return '';
+  // Eliminamos caracteres no-ASCII (umlauts, etc.) para evitar tofu en algunos sistemas
+  return input.replace(/[^\x20-\x7E]/g, '');
+}
 
 export async function generateTemplateSlide(opts: {
   title: string;
@@ -164,10 +172,10 @@ export async function generateTemplateSlide(opts: {
   const width = 1080;
   const height = 1080;
 
-  // Branding:
-  // - Fondo crema Botanery: #F7F4EF
-  // - Texto principal: #1F2933 (gris-azul oscuro elegante)
-  // - Subtítulo: #4B5563
+  const safeTitle = sanitizeText(opts.title);
+  const safeSubtitle = sanitizeText(opts.subtitle || '');
+  const brand = 'botanery.de';
+
   const svg = `
     <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -176,30 +184,43 @@ export async function generateTemplateSlide(opts: {
           <stop offset="100%" stop-color="#FFFFFF"/>
         </linearGradient>
       </defs>
+
+      <style>
+        .title {
+          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 72px;
+          fill: #1F2933;
+          text-anchor: middle;
+        }
+        .subtitle {
+          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 40px;
+          fill: #4B5563;
+          text-anchor: middle;
+        }
+        .brand {
+          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 28px;
+          fill: #4F6354;
+          text-anchor: middle;
+        }
+      </style>
+
+      <!-- Fondo crema con ligero degradado -->
       <rect width="100%" height="100%" fill="url(#bg)"/>
 
       <!-- Franja superior sutil en verde Botanery -->
-      <rect x="0" y="0" width="100%" height="40" fill="#4F6354" opacity="0.12"/>
+      <rect x="0" y="0" width="100%" height="40" fill="#4F6354" opacity="0.10"/>
 
-      <text x="50%" y="42%" text-anchor="middle"
-        font-family="Arial, sans-serif" font-size="72" fill="#1F2933">
-        ${opts.title}
+      <text x="50%" y="42%" class="title">${safeTitle}</text>
+
+      <text x="50%" y="60%" class="subtitle">
+        ${safeSubtitle}
       </text>
 
-      <text x="50%" y="60%" text-anchor="middle"
-        font-family="Arial, sans-serif" font-size="40" fill="#4B5563">
-        ${opts.subtitle || ''}
-      </text>
-
-      <!-- Mini “botanery.de” sutil abajo -->
-      <text x="50%" y="92%" text-anchor="middle"
-        font-family="Arial, sans-serif" font-size="28" fill="#4F6354" opacity="0.85">
-        botanery.de
-      </text>
+      <text x="50%" y="92%" class="brand">${brand}</text>
     </svg>
   `;
 
-  return await sharp(Buffer.from(svg))
-    .png()
-    .toBuffer();
+  return await sharp(Buffer.from(svg)).png().toBuffer();
 }
