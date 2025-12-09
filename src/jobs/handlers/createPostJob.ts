@@ -183,8 +183,8 @@ async function getCarouselImagesFromBucket(
  *
  * Slide 1 → Imagen principal del producto
  * Slide 2 → Zoom / detalle (o misma que la 1 si no hay)
- * Slide 3 → Beneficio clave (template gráfico)
- * Slide 4 → CTA (template gráfico)
+ * Slide 3 → Beneficio clave (template gráfico Botanery)
+ * Slide 4 → CTA (template gráfico Botanery + “logo” tipográfico)
  */
 async function buildCarousel4(
   product: ProductLike,
@@ -205,28 +205,30 @@ async function buildCarousel4(
   // Slide 1 → imagen principal
   slides.push(primary);
 
-  // Slide 2 → detalle / secondary
+  // Slide 2 → detalle / secondary (si no hay, repite la principal de forma segura)
   slides.push(secondary);
 
-  // Slide 3 → template gráfica con beneficios
+  // Slide 3 → template gráfica con beneficio clave
   const slide3Buffer = await generateTemplateSlide({
     title: 'Warum Orchideen?',
     subtitle: 'Pflegeleicht, langlebig und ideal für jedes Zuhause.',
+    variant: 'benefit',
   });
   const slide3Url = await uploadToSupabase(
     slide3Buffer,
-    `carousel/slide3-${product.id}.png`,
+    `carousel/benefit-${product.id}.png`,
   );
   slides.push(slide3Url);
 
-  // Slide 4 → CTA
+  // Slide 4 → CTA con branding Botanery
   const slide4Buffer = await generateTemplateSlide({
     title: 'Entdecke mehr',
-    subtitle: 'botanery.de',
+    subtitle: 'Deine Lieblingspflanzen auf botanery.de',
+    variant: 'cta',
   });
   const slide4Url = await uploadToSupabase(
     slide4Buffer,
-    `carousel/slide4-${product.id}.png`,
+    `carousel/cta-${product.id}.png`,
   );
   slides.push(slide4Url);
 
