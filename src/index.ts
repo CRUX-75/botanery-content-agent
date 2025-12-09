@@ -46,12 +46,16 @@ app.get('/healthz', async (_req: Request, res: Response) => {
 // Crear job de tipo CREATE_POST
 app.post('/jobs/create', async (req: Request, res: Response) => {
   try {
-    // ✅ Leemos TODO lo que nos interesa del body
+    const body = req.body || {};
+
+    // 👇 Clave: si viene body.payload, lo usamos; si no, usamos body directo
+    const source = body.payload ?? body;
+
     const {
       format = 'IG_SINGLE',      // si no viene, por defecto single
       style = 'fun',             // default razonable
       target_channel = 'IG_FB',  // por defecto IG + FB
-    } = req.body || {};
+    } = source || {};
 
     const payload = {
       format,
@@ -59,10 +63,12 @@ app.post('/jobs/create', async (req: Request, res: Response) => {
       target_channel,
     };
 
+    const jobType = body.job_type ?? 'CREATE_POST';
+
     const { data, error } = await supabaseAdmin
       .from('job_queue')
       .insert({
-        job_type: 'CREATE_POST',
+        job_type: jobType,
         payload,
         status: 'PENDING',
       })
@@ -102,7 +108,7 @@ app.post('/jobs/publish', async (req: Request, res: Response) => {
       .from('job_queue')
       .insert({
         job_type: 'PUBLISH_POST',
-        payload, 
+        payload,
         status: 'PENDING',
       })
       .select()
@@ -110,7 +116,10 @@ app.post('/jobs/publish', async (req: Request, res: Response) => {
 
     if (error) throw error;
 
-    log('[API] PUBLISH_POST job created', { jobId: data.id, payload: data.payload });
+    log('[API] PUBLISH_POST job created', {
+      jobId: data.id,
+      payload: data.payload,
+    });
     res.json({ success: true, job: data });
   } catch (error) {
     logError('[API] Failed to create publish job', error);
