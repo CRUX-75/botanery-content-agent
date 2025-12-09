@@ -187,6 +187,11 @@ export async function generateTemplateSlide(opts: {
 }): Promise<Buffer> {
   const width = 1080;
   const height = 1080;
+
+  // 🔒 Valores seguros (evita textos vacíos que luego salen como "□")
+  const titleText = (opts.title || '').trim() || 'Botanery';
+  const subtitleText = (opts.subtitle || '').trim();
+
   const variant = opts.variant ?? 'benefit';
 
   const fontFamily = embeddedFontBase64
@@ -204,10 +209,12 @@ export async function generateTemplateSlide(opts: {
   const brandBlock =
     variant === 'cta'
       ? `
+        <!-- "Logo" tipográfico para CTA -->
         <text x="50%" y="${height - 110}" class="brand-strong">botanery</text>
         <text x="50%" y="${height - 75}" class="brand-light">.de</text>
       `
       : `
+        <!-- Marca discreta para slides de beneficio -->
         <text x="50%" y="${height - 60}" class="brand-light">botanery.de</text>
       `;
 
@@ -234,7 +241,7 @@ export async function generateTemplateSlide(opts: {
 
         .title {
           font-family: ${fontFamily};
-          font-size: 72px;
+          font-size: 76px;
           fill: ${titleColor};
           text-anchor: middle;
         }
@@ -267,8 +274,8 @@ export async function generateTemplateSlide(opts: {
 
       ${ctaBand}
 
-      <text x="50%" y="42%" class="title">${opts.title}</text>
-      <text x="50%" y="60%" class="subtitle">${opts.subtitle || ''}</text>
+      <text x="50%" y="42%" class="title">${titleText}</text>
+      <text x="50%" y="60%" class="subtitle">${subtitleText}</text>
 
       ${brandBlock}
     </svg>
