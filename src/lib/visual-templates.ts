@@ -1,5 +1,7 @@
 // src/lib/visual-templates.ts
 
+import sharp from 'sharp';
+
 // ---------------------------------------------
 // Interfaces necesarias para evitar errores TS
 // ---------------------------------------------
@@ -29,10 +31,11 @@ export interface BackgroundConfig {
 // No afecta tu modelo real de supabase.
 export interface Product {
   product_category?: string | null;
+  product_name?: string | null;
 }
 
 // ---------------------------------------------
-// Plantillas visuales (sin cambios)
+// Plantillas visuales con branding BOTANERY
 // ---------------------------------------------
 
 export interface VisualTemplate {
@@ -42,113 +45,161 @@ export interface VisualTemplate {
   background: BackgroundConfig;
 }
 
+/**
+ * Paleta base Botanery:
+ *  - Crema suave: #F7F4EF
+ *  - Verde Botanery: #4F6354
+ *  - Marrón cálido (granulat): #8D6E63
+ *  - Lila suave (töpfe): #E8EAF6
+ */
 export const TEMPLATES: Record<string, VisualTemplate> = {
-  emergency_kit: {
-    type: 'carousel',
-    slides: [
-      {
-        layout: 'hero',
-        elements: ['product_image', 'safety_badge', 'season_context'],
-        textPosition: 'top-left',
-        backgroundColor: '#FF4444'
-      },
-      {
-        layout: 'features',
-        elements: ['product_contents_grid', 'checkmarks'],
-        textPosition: 'bottom'
-      },
-      {
-        layout: 'usage',
-        elements: ['lifestyle_illustration', 'dog_icon'],
-        textPosition: 'center'
-      },
-      {
-        layout: 'cta',
-        elements: ['logo', 'price', 'shop_button'],
-        backgroundColor: '#00AA44'
-      }
-    ],
-    overlay: {
-      icon: 'medical_cross',
-      badge: 'Sicherheit',
-      accentColor: '#FF4444'
-    },
-    background: {
-      type: 'gradient',
-      colors: ['#FFE5E5', '#FFFFFF']
-    }
-  },
-
-  toy: {
-    type: 'single',
-    overlay: {
-      icon: 'play',
-      badge: 'Spielspaß',
-      accentColor: '#FFB800',
-      decorations: ['paw_prints', 'sparkles']
-    },
-    background: {
-      type: 'solid_with_pattern',
-      color: '#FFF9E5',
-      pattern: 'dots'
-    }
-  },
-
-  food: {
-    type: 'carousel',
-    slides: [
-      {
-        layout: 'hero',
-        elements: ['product_image', 'quality_badge'],
-        textPosition: 'bottom'
-      },
-      {
-        layout: 'features',
-        elements: ['ingredient_icons', 'natural_badge']
-      },
-      {
-        layout: 'cta',
-        elements: ['logo', 'price', 'shop_button']
-      }
-    ],
-    overlay: {
-      icon: 'bowl',
-      badge: 'Premium Futter',
-      accentColor: '#00AA44'
-    },
-    background: {
-      type: 'gradient',
-      colors: ['#E8F5E9', '#FFFFFF']
-    }
-  },
-
-  hygiene: {
+  orchid: {
     type: 'single',
     overlay: {
       icon: 'sparkle',
-      badge: 'Hygiene',
-      accentColor: '#00BCD4'
+      badge: 'Phalaenopsis',
+      accentColor: '#4F6354',
+      decorations: ['sparkles'],
+    },
+    background: {
+      type: 'gradient',
+      colors: ['#F7F4EF', '#FFFFFF'],
+    },
+  },
+
+  granulate: {
+    type: 'single',
+    overlay: {
+      icon: 'bowl',
+      badge: 'Granulat',
+      accentColor: '#8D6E63',
     },
     background: {
       type: 'solid',
-      color: '#E0F7FA'
-    }
+      color: '#F3E5D8',
+    },
+  },
+
+  pot: {
+    type: 'single',
+    overlay: {
+      icon: 'star',
+      badge: 'Ziertopf',
+      accentColor: '#5C6BC0',
+    },
+    background: {
+      type: 'solid',
+      color: '#E8EAF6',
+    },
   },
 
   accessory: {
     type: 'single',
     overlay: {
       icon: 'star',
-      badge: 'Must-Have',
-      accentColor: '#9C27B0'
+      badge: 'Botanery',
+      accentColor: '#4F6354',
     },
     background: {
       type: 'solid',
-      color: '#F3E5F5'
-    }
-  }
+      color: '#F7F4EF',
+    },
+  },
 };
 
+/**
+ * Resolver qué plantilla aplicar según el producto.
+ * Usamos mismas heurísticas que en el bucket:
+ *  - Orquídeas / Phalaenopsis
+ *  - Granulat / Substrat / Colomi
+ *  - Ziertöpfe / Töpfe
+ */
+function resolveTemplateKey(product: Product): keyof typeof TEMPLATES {
+  const rawCategory = (product.product_category || '').toLowerCase();
+  const name = (product.product_name || '').toLowerCase();
+  const text = `${rawCategory} ${name}`;
+
+  if (
+    text.includes('orchid') ||
+    text.includes('orchidee') ||
+    text.includes('phalaenopsis')
+  ) {
+    return 'orchid';
+  }
+
+  if (
+    text.includes('granulat') ||
+    text.includes('substrat') ||
+    text.includes('colomi')
+  ) {
+    return 'granulate';
+  }
+
+  if (
+    text.includes('ziertopf') ||
+    text.includes('ziertoepf') ||
+    text.includes('topf') ||
+    text.includes('töpfe') ||
+    text.includes('toepfe')
+  ) {
+    return 'pot';
+  }
+
+  return 'accessory';
+}
+
 export function getTemplateForProduct(product: Product): VisualTemplate {
-  return TEMPLATES[product.product_category || 'accessory'] || TEMPLATES.accessory;
+  const key = resolveTemplateKey(product);
+  return TEMPLATES[key] || TEMPLATES.accessory;
+}
+
+// ---------------------------------------------
+// 🧩 Helper gráfico para slides de texto (Botanery)
+// ---------------------------------------------
+
+export async function generateTemplateSlide(opts: {
+  title: string;
+  subtitle?: string;
+}): Promise<Buffer> {
+  const width = 1080;
+  const height = 1080;
+
+  // Branding:
+  // - Fondo crema Botanery: #F7F4EF
+  // - Texto principal: #1F2933 (gris-azul oscuro elegante)
+  // - Subtítulo: #4B5563
+  const svg = `
+    <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#F7F4EF"/>
+          <stop offset="100%" stop-color="#FFFFFF"/>
+        </linearGradient>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#bg)"/>
+
+      <!-- Franja superior sutil en verde Botanery -->
+      <rect x="0" y="0" width="100%" height="40" fill="#4F6354" opacity="0.12"/>
+
+      <text x="50%" y="42%" text-anchor="middle"
+        font-family="Arial, sans-serif" font-size="72" fill="#1F2933">
+        ${opts.title}
+      </text>
+
+      <text x="50%" y="60%" text-anchor="middle"
+        font-family="Arial, sans-serif" font-size="40" fill="#4B5563">
+        ${opts.subtitle || ''}
+      </text>
+
+      <!-- Mini “botanery.de” sutil abajo -->
+      <text x="50%" y="92%" text-anchor="middle"
+        font-family="Arial, sans-serif" font-size="28" fill="#4F6354" opacity="0.85">
+        botanery.de
+      </text>
+    </svg>
+  `;
+
+  return await sharp(Buffer.from(svg))
+    .png()
+    .toBuffer();
 }

@@ -1,13 +1,12 @@
 // src/jobs/handlers/createPostJob.ts
 
 import { supabaseAdmin } from '../../lib/supabase';
-import { getTemplateForProduct } from '../../lib/visual-templates';
+import { getTemplateForProduct, generateTemplateSlide } from '../../lib/visual-templates';
 import { generateBasicImage, ProductLike } from '../../lib/visual-generator';
 import { uploadToSupabase } from '../../lib/upload';
 import { generatePostContent } from '../../lib/prompt-generator';
 import { selectProduct } from '../../lib/product-selector';
 import { generateAdvancedVisuals } from '../../lib/visual-generator-v2';
-
 type VisualAssets = {
   mainImage: string;
   carouselImages: string[] | null;
@@ -102,6 +101,9 @@ function isImageFile(name: string): boolean {
  * siguiendo esta lógica:
  *  1) Probar los prefijos devueltos por getBucketPrefixesForProduct
  *  2) Si no hay resultados válidos, devuelve []
+ *
+ * 🔹 OJO: actualmente NO se usa en la decisión de carrusel (MVP 4-slides),
+ * pero lo dejamos para futuros sprints (10-slides, etc.)
  */
 async function getCarouselImagesFromBucket(
   product: ProductLike,
@@ -176,6 +178,61 @@ async function getCarouselImagesFromBucket(
   return [];
 }
 
+/**
+ * 🧩 CARRUSEL 4 SLIDES — MVP
+ *
+ * Slide 1 → Imagen principal del producto
+ * Slide 2 → Zoom / detalle (o misma que la 1 si no hay)
+ * Slide 3 → Beneficio clave (template gráfico)
+ * Slide 4 → CTA (template gráfico)
+ */
+async function buildCarousel4(
+  product: ProductLike,
+  mainImageUrl: string,
+): Promise<string[]> {
+  const slides: string[] = [];
+
+  const primary =
+    (product as any).image_primary_url ||
+    (product as any).image_url ||
+    mainImageUrl;
+
+  const secondary =
+    (product as any).image_secondary_url ||
+    (product as any).image_detail_url ||
+    primary;
+
+  // Slide 1 → imagen principal
+  slides.push(primary);
+
+  // Slide 2 → detalle / secondary
+  slides.push(secondary);
+
+  // Slide 3 → template gráfica con beneficios
+  const slide3Buffer = await generateTemplateSlide({
+    title: 'Warum Orchideen?',
+    subtitle: 'Pflegeleicht, langlebig und ideal für jedes Zuhause.',
+  });
+  const slide3Url = await uploadToSupabase(
+    slide3Buffer,
+    `carousel/slide3-${product.id}.png`,
+  );
+  slides.push(slide3Url);
+
+  // Slide 4 → CTA
+  const slide4Buffer = await generateTemplateSlide({
+    title: 'Entdecke mehr',
+    subtitle: 'botanery.de',
+  });
+  const slide4Url = await uploadToSupabase(
+    slide4Buffer,
+    `carousel/slide4-${product.id}.png`,
+  );
+  slides.push(slide4Url);
+
+  return slides;
+}
+
 export async function createPostJob(job: any) {
   try {
     console.log('\n--- CREATE POST JOB START ---');
@@ -185,7 +242,6 @@ export async function createPostJob(job: any) {
     const payload: CreatePostPayload = job?.payload ?? {};
     const requestedFormat = payload.format;
     const requestedChannel = payload.target_channel;
-    // ... (a partir de aquí sigue igual que ya lo tienes)
 
     // 1) Seleccionar producto
     const product = await selectProduct();
@@ -238,81 +294,54 @@ export async function createPostJob(job: any) {
       templateVersion = 'v1_basic';
     }
 
-    // 3.1) Intentar obtener imágenes reales desde el bucket
-    let bucketImages: string[] = [];
-    try {
-      bucketImages = await getCarouselImagesFromBucket(
-        product as ProductLike,
-        MAX_CAROUSEL_SLIDES,
-      );
-    } catch (err: any) {
-      console.warn(
-        '[CREATE_POST] Error al intentar cargar imágenes desde el bucket:',
-        err?.message || String(err),
-      );
-    }
-
-    console.log('[CREATE_POST] Resultado búsqueda bucket', {
-      bucketImagesCount: bucketImages.length,
-      bucketImages,
-    });
-
-    // 3.2) Decisión inteligente:
-    // - Si hay >= 4 imágenes (bucket o advanced) → CARRUSEL
-    // - Si no → SINGLE POST
-    const advancedImages = Array.isArray(visualAssets.carouselImages)
-      ? visualAssets.carouselImages
-      : [];
-
-    const hasBucketCarousel = bucketImages.length >= MAX_CAROUSEL_SLIDES;
-    const hasAdvancedCarousel = advancedImages.length >= MAX_CAROUSEL_SLIDES;
-    const hasAnyCarouselSource = hasBucketCarousel || hasAdvancedCarousel;
-
-    let carouselImages: string[] | null = null;
+    // 3.1) Decisión de formato + construcción del carrusel 4-slides (MVP)
     let format: 'IG_SINGLE' | 'IG_CAROUSEL';
     let slideCount: number;
+    let carouselImages: string[] | null = null;
 
-    if (hasAnyCarouselSource) {
-      // PRIORIDAD 1 → Bucket
-      if (hasBucketCarousel) {
-        carouselImages = bucketImages.slice(0, MAX_CAROUSEL_SLIDES);
-        format = 'IG_CAROUSEL';
-        slideCount = carouselImages.length;
-        visualFormat = `carousel_${slideCount}_bucket`;
-        console.log(
-          `[CREATE_POST] Usando ${slideCount} imágenes del bucket para el carrusel.`,
-        );
-      } else {
-        // PRIORIDAD 2 → Imágenes del pipeline avanzado
-        carouselImages = advancedImages.slice(0, MAX_CAROUSEL_SLIDES);
-        format = 'IG_CAROUSEL';
-        slideCount = carouselImages.length;
-        visualFormat = `carousel_${slideCount}_advanced`;
-        console.log(
-          `[CREATE_POST] Usando ${slideCount} imágenes del pipeline avanzado para el carrusel.`,
-        );
-      }
-    } else {
-      // ❗ No hay material suficiente → publicamos SINGLE
+    if (requestedFormat === 'IG_SINGLE') {
+      // Si explícitamente se pide SINGLE, respetamos
       format = 'IG_SINGLE';
       slideCount = 1;
       carouselImages = null;
-
       if (!visualFormat.startsWith('single')) {
         visualFormat = 'single';
       }
-
       console.log(
-        '[CREATE_POST] No hay suficientes imágenes para carrusel. Publicaremos SINGLE POST.',
+        '[CREATE_POST] requestedFormat=IG_SINGLE → se fuerza SINGLE POST.',
       );
+    } else {
+      try {
+        // Por defecto apuntamos a carrusel 4-slides
+        carouselImages = await buildCarousel4(
+          product as ProductLike,
+          visualAssets.mainImage,
+        );
+        format = 'IG_CAROUSEL';
+        slideCount = carouselImages.length;
+        visualFormat = `carousel_${slideCount}_mvp`;
+
+        console.log(
+          `[CREATE_POST] Carrusel 4-slides generado correctamente (slides=${slideCount}).`,
+        );
+      } catch (err: any) {
+        console.warn(
+          '[CREATE_POST] Error generando carrusel 4-slides, fallback a SINGLE:',
+          err?.message || String(err),
+        );
+        format = 'IG_SINGLE';
+        slideCount = 1;
+        carouselImages = null;
+        if (!visualFormat.startsWith('single')) {
+          visualFormat = 'single';
+        }
+      }
     }
 
     console.log('[CREATE_POST] Visual decision', {
       requestedFormat,
       format,
       slideCount,
-      hasBucketCarousel,
-      hasAdvancedCarousel,
       carouselImagesLength: carouselImages?.length ?? 0,
     });
 
