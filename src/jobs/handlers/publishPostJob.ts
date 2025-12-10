@@ -100,33 +100,37 @@ export async function publishPostJob(job: JobLike): Promise<void> {
       null;
 
     // --- INSTAGRAM ---
-    if (publishToIG) {
-      if (isCarousel) {
-        console.log(
-          `📸 Publicando CARRUSEL en Instagram (${carouselImages!.length} slides)...`,
-        );
-        const imagesPayload = carouselImages!.map((url) => ({
-          image_url: url,
-        }));
+if (publishToIG) {
+  if (isCarousel) {
+    console.log(
+      `📸 Publicando CARRUSEL en Instagram (${carouselImages!.length} slides)...`,
+    );
 
-        igMediaId = await metaClient.publishInstagramCarousel(
-          imagesPayload,
-          captionIG,
-        );
-        console.log(`✅ IG Carousel OK: ${igMediaId}`);
-      } else {
-        console.log('🖼️ Publicando SINGLE en Instagram...');
-        if (!mainImageUrl) {
-          throw new Error('No image_url found for IG Single');
-        }
-
-        igMediaId = await metaClient.publishInstagramSingle({
-          image_url: mainImageUrl,
-          caption: captionIG,
-        });
-        console.log(`✅ IG Single OK: ${igMediaId}`);
-      }
+    // carouselImages ya es string[] con URLs públicas
+    const imageUrls = carouselImages!;
+    if (!imageUrls.length) {
+      throw new Error('No hay imágenes para el carrusel de Instagram');
     }
+
+    igMediaId = await metaClient.publishInstagramCarousel(
+      imageUrls,
+      captionIG,
+    );
+    console.log(`✅ IG Carousel OK: ${igMediaId}`);
+  } else {
+    console.log('🖼️ Publicando SINGLE en Instagram...');
+    if (!mainImageUrl) {
+      throw new Error('No image_url found for IG Single');
+    }
+
+    igMediaId = await metaClient.publishInstagramSingle({
+      image_url: mainImageUrl,
+      caption: captionIG,
+    });
+    console.log(`✅ IG Single OK: ${igMediaId}`);
+  }
+}
+
 
     // FB apagado
     if (publishToFB) {
